@@ -1,2 +1,3 @@
 pub mod sheet;
-pub use sheet::Spreadsheet;
+
+pub use sheet::{Cell, CellError, CellValue, Spreadsheet};

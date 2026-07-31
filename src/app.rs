@@ -22,7 +22,6 @@ pub struct App {
     pub scroll_row: usize,
     pub scroll_col: usize,
 
-    // Edit mode state
     pub edit_buffer: String,
     pub edit_cursor_idx: usize,
 
@@ -48,11 +47,12 @@ impl App {
 
     pub fn enter_edit_mode(&mut self) {
         self.mode = Mode::Edit;
-        let current_val = self
+        let current_raw = self
             .sheet
             .get_cell(self.cursor_row, self.cursor_col)
+            .map(|c| c.raw.as_str())
             .unwrap_or("");
-        self.edit_buffer = current_val.to_string();
+        self.edit_buffer = current_raw.to_string();
         self.edit_cursor_idx = self.edit_buffer.chars().count();
         self.status_message = String::from("EDIT MODE -- Press Esc or F2 to commit changes");
     }

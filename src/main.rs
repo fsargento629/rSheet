@@ -1,90 +1,127 @@
+use crossterm::{
+    event::{self, Event, KeyCode},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
+use std::{env, error::Error, io};
+
 mod app;
 mod domain;
 mod ui;
-
-use std::error::Error;
-use std::io;
-use std::time::Duration;
-
-use crossterm::ExecutableCommand;
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 
 use app::{App, Direction, Mode};
 use domain::Spreadsheet;
 use ui::CsvGrid;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // 1. Setup Terminal
+    let args: Vec<String> = env::args().collect();
+
+    // Setup terminal
     enable_raw_mode()?;
-    io::stdout().execute(EnterAlternateScreen)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-    // 2. Load Data
-    let csv_path = "data/smoketest.csv";
-    let spreadsheet = Spreadsheet::load_from_csv(csv_path, 100, 50).unwrap_or_else(|_| {
-        let mut fallback = Spreadsheet::new(100, 50);
-        fallback.loaded_path = Some(csv_path.to_string());
-        fallback.data[0][0] = String::from("Missing");
-        fallback.data[0][1] = String::from("data/smoketest.csv");
-        fallback
-    });
+    // Determine target file: CLI arg if provided, otherwise "data/smoketest.csv"
+    let file_path = args
+        .get(1)
+        .map(|s| s.as_str())
+        .unwrap_or("data/smoketest.csv");
 
-    let mut app = App::new(spreadsheet);
+    // Initialize spreadsheet with fallback to empty sheet
+    let sheet = Spreadsheet::load_from_csv(file_path, 100, 26)
+        .unwrap_or_else(|_| Spreadsheet::new(100, 26));
 
-    // 3. App Loop
-    while !app.should_quit {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let grid = CsvGrid::new(&app);
-            let (vis_rows, vis_cols) = grid.visible_dimensions(area);
+    let mut app = App::new(sheet);
 
-            frame.render_widget(grid, area);
+    // Run the main event loop
+    let res = run_app(&mut terminal, &mut app);
 
-            if event::poll(Duration::from_millis(16)).unwrap_or(false) {
-                if let Ok(Event::Key(key)) = event::read() {
-                    match app.mode {
-                        Mode::Normal => match key.code {
-                            // Enter Edit Mode
-                            KeyCode::Char('a') | KeyCode::F(2) => app.enter_edit_mode(),
+    // Teardown terminal
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
 
-                            // Save to CSV
-                            KeyCode::Char('s') => app.save_spreadsheet(),
-
-                            // Quit
-                            KeyCode::Char('q') => app.should_quit = true,
-
-                            // Navigation
-                            KeyCode::Char('h') | KeyCode::Left => {
-                                app.move_cursor(Direction::Left, vis_rows, vis_cols);
-                            }
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                app.move_cursor(Direction::Down, vis_rows, vis_cols);
-                            }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                app.move_cursor(Direction::Up, vis_rows, vis_cols);
-                            }
-                            KeyCode::Char('l') | KeyCode::Right => {
-                                app.move_cursor(Direction::Right, vis_rows, vis_cols);
-                            }
-                            _ => {}
-                        },
-                        Mode::Edit => {
-                            app.handle_edit_input(key);
-                        }
-                    }
-                }
-            }
-        })?;
+    if let Err(err) = res {
+        println!("Application Error: {:?}", err);
     }
 
-    // 4. Restore Terminal
-    disable_raw_mode()?;
-    io::stdout().execute(LeaveAlternateScreen)?;
     Ok(())
+}
+
+fn get_terminal_rect(
+    terminal: &Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<Rect, Box<dyn Error>> {
+    let size = terminal.size()?;
+    Ok(Rect::new(0, 0, size.width, size.height))
+}
+
+fn get_visible_dims(
+    terminal: &Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<(usize, usize), Box<dyn Error>> {
+    let rect = get_terminal_rect(terminal)?;
+    let visible_cols = if rect.width > 6 {
+        ((rect.width - 6) / 12) as usize
+    } else {
+        0
+    };
+    let visible_rows = if rect.height > 2 {
+        (rect.height - 2) as usize
+    } else {
+        0
+    };
+    Ok((visible_rows, visible_cols))
+}
+
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<(), Box<dyn Error>> {
+    loop {
+        if app.should_quit {
+            return Ok(());
+        }
+
+        terminal.draw(|f| {
+            let size = f.area();
+            let grid = CsvGrid::new(app);
+            f.render_widget(grid, size);
+        })?;
+
+        if let Event::Key(key) = event::read()? {
+            if app.mode == Mode::Edit {
+                app.handle_edit_input(key);
+            } else {
+                let rect = get_terminal_rect(terminal)?;
+                match key.code {
+                    KeyCode::Char('q') => app.should_quit = true,
+                    KeyCode::Char('s') => app.save_spreadsheet(),
+                    KeyCode::Char('a') | KeyCode::F(2) | KeyCode::Enter => app.enter_edit_mode(),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let (rows, cols) = get_visible_dims(terminal)?;
+                        let _ = CsvGrid::new(app).visible_dimensions(rect);
+                        app.move_cursor(Direction::Up, rows, cols);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let (rows, cols) = get_visible_dims(terminal)?;
+                        let _ = CsvGrid::new(app).visible_dimensions(rect);
+                        app.move_cursor(Direction::Down, rows, cols);
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        let (rows, cols) = get_visible_dims(terminal)?;
+                        let _ = CsvGrid::new(app).visible_dimensions(rect);
+                        app.move_cursor(Direction::Left, rows, cols);
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        let (rows, cols) = get_visible_dims(terminal)?;
+                        let _ = CsvGrid::new(app).visible_dimensions(rect);
+                        app.move_cursor(Direction::Right, rows, cols);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    } 
 }
