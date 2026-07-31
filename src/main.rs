@@ -96,8 +96,8 @@ fn run_app(
             } else {
                 let rect = get_terminal_rect(terminal)?;
                 match key.code {
-                    KeyCode::Char('q') => app.should_quit = true,
-                    KeyCode::Char('s') => app.save_spreadsheet(),
+                    KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
+                    KeyCode::Char('s') | KeyCode::Char('S') => app.save_spreadsheet(),
                     KeyCode::Char('a') | KeyCode::F(2) | KeyCode::Enter => app.enter_edit_mode(),
                     KeyCode::Up | KeyCode::Char('k') => {
                         let (rows, cols) = get_visible_dims(terminal)?;
@@ -123,5 +123,5 @@ fn run_app(
                 }
             }
         }
-    } 
+    }
 }

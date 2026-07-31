@@ -2,9 +2,8 @@
 
 ## Next
 
-- new feature: the value shown in a cell can be different than the csv value. For example
- - "= 1+1" should evaluate to 2 
- - How would wer implement this type of on the fly evaluation? Give me some idead. Brainstorm with me. I want the csv to save the string, but then  I want the grid to shwo the result of that operation, or ERROR if it makes no sense. The operations shoudl all start with a =  
+- Read code and understand it
+- Get a copilot subscription. The code is getting too long
 
 
 ## After
@@ -17,11 +16,19 @@
   - Special mode after pressing ESC to go to special mode (esc again to leave it). 
     - vim like jumps, by pressing ESC to go to special mode, then 2j to jump 2 lines and so forth
     - cell jumping in special mode (for example A2  then enter to go cell A2. the letter needs to be capitalized for obvious reasons)
+- Delete to delete the content of a cell
+- edit mode should make a cell larger, it should be superimposed to the grid, and be made temporarily larger
+- F3 to toggle values being shown or fomulas
+- cursor capture to highlight cells, choose a cell. scroll right and left using shift + mouse wheel
+- The evaluation engine should treat words as potential functions. A function is a wordfolowed by parenthesisthat can have arguments. Functions should have some rules as to the amount of arguments they can take and the types of arguments they can take. They should rust functions mapped at compile time
+  - An initial list of functions could be pow, sum, avg, max and min
 
 ## Future
 
 - Cosmetic improvements : header with file name, and program name 
-- different tabs
+- merge cells feature. this would force us to include some GUI comands in the csv so that the view changes
 - even more complex navigation
-- graphs
 - language support
+- support for AA, BB, AB, so longer lines than just until Z
+- different tabs
+- graphs on a different tab
