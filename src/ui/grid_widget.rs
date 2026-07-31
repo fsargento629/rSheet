@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
-use crate::app::App;
+use crate::app::{App, Mode};
 use crate::domain::Spreadsheet;
 
 pub struct CsvGrid<'a> {
@@ -21,14 +21,13 @@ impl<'a> CsvGrid<'a> {
         }
     }
 
-    /// Helper to compute visible capacity given screen dimensions
     pub fn visible_dimensions(&self, area: Rect) -> (usize, usize) {
-        if area.width < self.header_width || area.height < 2 {
+        if area.width < self.header_width || area.height < 3 {
             return (0, 0);
         }
 
         let visible_cols = ((area.width - self.header_width) / self.col_width) as usize;
-        let visible_rows = (area.height - 1) as usize; // reserve 1 row for top header
+        let visible_rows = (area.height - 2) as usize; // 1 row for header, 1 for status bar
 
         (visible_rows, visible_cols)
     }
@@ -36,7 +35,7 @@ impl<'a> CsvGrid<'a> {
 
 impl<'a> Widget for CsvGrid<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width < self.header_width || area.height < 2 {
+        if area.width < self.header_width || area.height < 3 {
             return;
         }
 
@@ -48,20 +47,30 @@ impl<'a> Widget for CsvGrid<'a> {
             .add_modifier(Modifier::BOLD);
         let cell_border_style = Style::default().fg(Color::DarkGray);
         let cell_text_style = Style::default().fg(Color::Reset);
-        let active_cell_style = Style::default()
+
+        let normal_cursor_style = Style::default()
             .bg(Color::Blue)
             .fg(Color::White)
             .add_modifier(Modifier::BOLD);
 
+        let edit_cursor_style = Style::default()
+            .bg(Color::Magenta)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD);
+
+        let text_cursor_char_style = Style::default()
+            .bg(Color::Yellow)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD);
+
         let (visible_rows, visible_cols) = self.visible_dimensions(area);
 
-        // --- 1. Draw Top-Left Corner Box ---
+        // --- 1. Draw Corner Box ---
         let corner_str = format!("{:>width$} ", "", width = (self.header_width as usize) - 1);
         buf.set_string(area.x, area.y, &corner_str, default_header_style);
 
-        // --- 2. Draw Column Headers (A, B, C...) ---
+        // --- 2. Draw Column Headers ---
         let mut x_offset = area.x + self.header_width;
-
         for visible_col_idx in 0..visible_cols {
             let col_idx = self.app.scroll_col + visible_col_idx;
             if col_idx >= self.app.sheet.max_cols {
@@ -87,14 +96,13 @@ impl<'a> Widget for CsvGrid<'a> {
 
         // --- 3. Draw Grid Rows & Cells ---
         let mut y_offset = area.y + 1;
-
         for visible_row_idx in 0..visible_rows {
             let row_idx = self.app.scroll_row + visible_row_idx;
             if row_idx >= self.app.sheet.max_rows {
                 break;
             }
 
-            // A. Draw Row Header (1, 2, 3...)
+            // Row Header
             let row_label = format!(
                 "{:>width$} ",
                 row_idx + 1,
@@ -107,7 +115,7 @@ impl<'a> Widget for CsvGrid<'a> {
             };
             buf.set_string(area.x, y_offset, &row_label, row_header_style);
 
-            // B. Draw Row Cells
+            // Row Cells
             let mut cell_x = area.x + self.header_width;
             for visible_col_idx in 0..visible_cols {
                 let col_idx = self.app.scroll_col + visible_col_idx;
@@ -116,34 +124,81 @@ impl<'a> Widget for CsvGrid<'a> {
                 }
 
                 let is_active = row_idx == self.app.cursor_row && col_idx == self.app.cursor_col;
-                let cell_value = self.app.sheet.get_cell(row_idx, col_idx).unwrap_or("");
-
                 let text_max_len = (self.col_width as usize) - 1;
-                let display_text = if cell_value.len() > text_max_len {
-                    format!("{}…", &cell_value[..text_max_len - 1])
-                } else {
-                    format!("{:<width$}", cell_value, width = text_max_len)
-                };
 
-                // Choose highlight vs standard style
-                let current_cell_style = if is_active {
-                    active_cell_style
-                } else {
-                    cell_text_style
-                };
+                if is_active && self.app.mode == Mode::Edit {
+                    // Render Active Edit Cell
+                    let raw_buffer = &self.app.edit_buffer;
+                    let display_text = if raw_buffer.len() > text_max_len {
+                        format!("{}…", &raw_buffer[..text_max_len - 1])
+                    } else {
+                        format!("{:<width$}", raw_buffer, width = text_max_len)
+                    };
 
-                buf.set_string(cell_x, y_offset, &display_text, current_cell_style);
+                    buf.set_string(cell_x, y_offset, &display_text, edit_cursor_style);
+
+                    // Highlight precise text cursor character index
+                    if self.app.edit_cursor_idx < text_max_len {
+                        let cursor_char = raw_buffer
+                            .chars()
+                            .nth(self.app.edit_cursor_idx)
+                            .unwrap_or(' ');
+                        buf.set_string(
+                            cell_x + (self.app.edit_cursor_idx as u16),
+                            y_offset,
+                            cursor_char.to_string(),
+                            text_cursor_char_style,
+                        );
+                    }
+                } else {
+                    // Render Normal / Non-Active Cell
+                    let cell_value = self.app.sheet.get_cell(row_idx, col_idx).unwrap_or("");
+                    let display_text = if cell_value.len() > text_max_len {
+                        format!("{}…", &cell_value[..text_max_len - 1])
+                    } else {
+                        format!("{:<width$}", cell_value, width = text_max_len)
+                    };
+
+                    let current_cell_style = if is_active {
+                        normal_cursor_style
+                    } else {
+                        cell_text_style
+                    };
+
+                    buf.set_string(cell_x, y_offset, &display_text, current_cell_style);
+                }
+
                 buf.set_string(
                     cell_x + (text_max_len as u16),
                     y_offset,
                     "|",
                     cell_border_style,
                 );
-
                 cell_x += self.col_width;
             }
 
             y_offset += 1;
         }
+
+        // --- 4. Draw Status Bar at Bottom ---
+        let status_y = area.y + area.height - 1;
+        let coord_str = format!(
+            " [{}{}] ",
+            Spreadsheet::col_to_letter(self.app.cursor_col),
+            self.app.cursor_row + 1
+        );
+        let mode_str = match self.app.mode {
+            Mode::Normal => " NORMAL ",
+            Mode::Edit => " EDIT ",
+        };
+
+        let status_style = Style::default().bg(Color::DarkGray).fg(Color::White);
+        let status_line = format!(
+            "{:<width$}",
+            format!("{}{}{}", mode_str, coord_str, self.app.status_message),
+            width = area.width as usize
+        );
+
+        buf.set_string(area.x, status_y, &status_line, status_style);
     }
 }
