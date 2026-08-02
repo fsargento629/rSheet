@@ -8,11 +8,10 @@ pub enum Mode {
     Edit,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
+    Vertical(isize),   // Positive = Down, Negative = Up
+    Horizontal(isize), // Positive = Right, Negative = Left
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -173,30 +172,28 @@ impl App {
         }
     }
 
-    pub fn move_cursor(&mut self, direction: Direction, visible_rows: usize, visible_cols: usize) {
+    pub fn move_cursor(&mut self, direction: Direction) {
         match direction {
-            Direction::Up => {
-                if self.cursor_row > 0 {
-                    self.cursor_row -= 1;
+            Direction::Vertical(delta) => {
+                if delta >= 0 {
+                    let amount = delta as usize;
+                    self.cursor_row = (self.cursor_row + amount).min(self.sheet.max_rows - 1);
+                } else {
+                    let amount = delta.unsigned_abs();
+                    self.cursor_row = self.cursor_row.saturating_sub(amount);
                 }
             }
-            Direction::Down => {
-                if self.cursor_row + 1 < self.sheet.max_rows {
-                    self.cursor_row += 1;
-                }
-            }
-            Direction::Left => {
-                if self.cursor_col > 0 {
-                    self.cursor_col -= 1;
-                }
-            }
-            Direction::Right => {
-                if self.cursor_col + 1 < self.sheet.max_cols {
-                    self.cursor_col += 1;
+            Direction::Horizontal(delta) => {
+                if delta >= 0 {
+                    let amount = delta as usize;
+                    self.cursor_col = (self.cursor_col + amount).min(self.sheet.max_cols - 1);
+                } else {
+                    let amount = delta.unsigned_abs();
+                    self.cursor_col = self.cursor_col.saturating_sub(amount);
                 }
             }
         }
-        self.adjust_viewport(visible_rows, visible_cols);
+        self.adjust_viewport();
     }
 
     pub fn move_to_start(&mut self) {
@@ -266,7 +263,25 @@ impl App {
         }
     }
 
-    fn adjust_viewport(&mut self, visible_rows: usize, visible_cols: usize) {
+    pub fn adjust_viewport(&mut self) {
+        let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+        let config = self.grid_config;
+
+        let visible_cols = if term_width > config.header_offset_x {
+            ((term_width - config.header_offset_x) / config.cell_width) as usize
+        } else {
+            0
+        };
+
+        // Subtract 1 from height to account for the status bar at the bottom!
+        let grid_height = term_height.saturating_sub(1);
+
+        let visible_rows = if grid_height > config.header_offset_y {
+            ((grid_height - config.header_offset_y) / config.cell_height) as usize
+        } else {
+            0
+        };
+
         if visible_rows == 0 || visible_cols == 0 {
             return;
         }

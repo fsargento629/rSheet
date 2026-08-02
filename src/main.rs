@@ -6,7 +6,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{env, error::Error, io};
 
 use std::time::Duration;
@@ -15,7 +15,7 @@ mod app;
 mod domain;
 mod ui;
 
-use app::{App, Direction, GridConfig, Mode};
+use app::{App, Direction, Mode};
 use domain::Spreadsheet;
 use ui::CsvGrid;
 
@@ -59,34 +59,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn get_terminal_rect(
-    terminal: &Terminal<CrosstermBackend<io::Stdout>>,
-) -> Result<Rect, Box<dyn Error>> {
-    let size = terminal.size()?;
-    Ok(Rect::new(0, 0, size.width, size.height))
-}
-
-fn get_visible_dims(
-    terminal: &Terminal<CrosstermBackend<io::Stdout>>,
-    config: &GridConfig,
-) -> Result<(usize, usize), Box<dyn Error>> {
-    let rect = get_terminal_rect(terminal)?;
-
-    let visible_cols = if rect.width > config.header_offset_x {
-        ((rect.width - config.header_offset_x) / config.cell_width) as usize
-    } else {
-        0
-    };
-
-    let visible_rows = if rect.height > config.header_offset_y {
-        ((rect.height - config.header_offset_y) / config.cell_height) as usize
-    } else {
-        0
-    };
-
-    Ok((visible_rows, visible_cols))
-}
-
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -108,7 +80,7 @@ fn run_app(
         })?;
 
         // 2. Non-blocking event check
-        if event::poll(Duration::from_millis(1))? {
+        if event::poll(Duration::from_micros(10))? {
             match event::read()? {
                 // Unified Mouse Event Handler
                 Event::Mouse(mouse_event) => {
@@ -117,6 +89,18 @@ fn run_app(
                         MouseEventKind::Down(MouseButton::Left) => {
                             if app.mode == Mode::Normal {
                                 app.handle_mouse_left_click(mouse_event.column, mouse_event.row);
+                            }
+                        }
+                        // Mouse wheel scroll UP
+                        MouseEventKind::ScrollUp => {
+                            if app.mode == Mode::Normal {
+                                app.move_cursor(Direction::Vertical(-1));
+                            }
+                        }
+                        // Mouse wheel scroll DOWN
+                        MouseEventKind::ScrollDown => {
+                            if app.mode == Mode::Normal {
+                                app.move_cursor(Direction::Vertical(1));
                             }
                         }
                         _ => {} // Ignore mouse movement / drag events
@@ -161,22 +145,18 @@ fn run_app(
                                 app.enter_edit_mode(Some(key.code.to_string()))
                             }
 
-                            // Navigation (Passing &app.grid_config now)
+                            // Navigation
                             (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
-                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
-                                app.move_cursor(Direction::Up, rows, cols);
+                                app.move_cursor(Direction::Vertical(-1));
                             }
                             (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
-                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
-                                app.move_cursor(Direction::Down, rows, cols);
+                                app.move_cursor(Direction::Vertical(1));
                             }
                             (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
-                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
-                                app.move_cursor(Direction::Left, rows, cols);
+                                app.move_cursor(Direction::Horizontal(-1));
                             }
                             (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
-                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
-                                app.move_cursor(Direction::Right, rows, cols);
+                                app.move_cursor(Direction::Horizontal(1));
                             }
 
                             _ => {}

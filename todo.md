@@ -2,7 +2,6 @@
 
 ## Now
 
-- cursor capture to highlight cells, choose a cell. scroll right and left using shift + mouse wheel
 
 
 ## Next
