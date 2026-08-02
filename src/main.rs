@@ -85,25 +85,40 @@ fn run_app(
                 // Unified Mouse Event Handler
                 Event::Mouse(mouse_event) => {
                     match mouse_event.kind {
-                        // Trigger strictly on MouseDown to ensure clean single & double click registration
+                        // Left click selection / double-click edit
                         MouseEventKind::Down(MouseButton::Left) => {
                             if app.mode == Mode::Normal {
                                 app.handle_mouse_left_click(mouse_event.column, mouse_event.row);
                             }
                         }
-                        // Mouse wheel scroll UP
+
+                        // Mouse wheel scroll UP / LEFT
                         MouseEventKind::ScrollUp => {
                             if app.mode == Mode::Normal {
-                                app.move_cursor(Direction::Vertical(-1));
+                                if mouse_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                    // CONTROL + Wheel Up -> Scroll Left
+                                    app.move_cursor(Direction::Horizontal(-1));
+                                } else {
+                                    // Standard Wheel Up -> Scroll Up
+                                    app.move_cursor(Direction::Vertical(-1));
+                                }
                             }
                         }
-                        // Mouse wheel scroll DOWN
+
+                        // Mouse wheel scroll DOWN / RIGHT
                         MouseEventKind::ScrollDown => {
                             if app.mode == Mode::Normal {
-                                app.move_cursor(Direction::Vertical(1));
+                                if mouse_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                    // CONTROL + Wheel Down -> Scroll Right
+                                    app.move_cursor(Direction::Horizontal(1));
+                                } else {
+                                    // Standard Wheel Down -> Scroll Down
+                                    app.move_cursor(Direction::Vertical(1));
+                                }
                             }
                         }
-                        _ => {} // Ignore mouse movement / drag events
+
+                        _ => {}
                     }
                 }
 
