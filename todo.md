@@ -1,12 +1,17 @@
 # TODO
 
+## Completed
+
+✓ **Function Support** (Completed)
+  - Added function parsing and evaluation to the expression engine
+  - Implemented functions: POW, SUM, AVG, MAX, MIN
+  - Functions integrate seamlessly with the DAG dependency tracker
+  - Cell references in function arguments are automatically tracked as dependencies
+  - Supports nested function calls and mixing functions with arithmetic
+  - Circular dependency detection works through function calls
+  - See FUNCTIONS.md for complete documentation
+
 ## Next
-
-- Read code and understand it
-- Get a copilot subscription. The code is getting too long
-
-
-## After
 
 - more complex navigation 
   - HOME to go to start of line
@@ -20,8 +25,6 @@
 - edit mode should make a cell larger, it should be superimposed to the grid, and be made temporarily larger
 - F3 to toggle values being shown or fomulas
 - cursor capture to highlight cells, choose a cell. scroll right and left using shift + mouse wheel
-- The evaluation engine should treat words as potential functions. A function is a wordfolowed by parenthesisthat can have arguments. Functions should have some rules as to the amount of arguments they can take and the types of arguments they can take. They should rust functions mapped at compile time
-  - An initial list of functions could be pow, sum, avg, max and min
 
 ## Future
 

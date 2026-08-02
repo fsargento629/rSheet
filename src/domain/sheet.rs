@@ -109,6 +109,7 @@ impl Spreadsheet {
         let file = File::open(&path)?;
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(false)
+            .flexible(true)
             .from_reader(file);
 
         let mut data = Vec::new();
@@ -479,6 +480,11 @@ impl Spreadsheet {
                     CellValue::Error(e) => CellValue::Error(e.clone()),
                 }
             }
+            Token::Function(name) => {
+                let func_name = name.clone();
+                *idx += 1;
+                self.parse_function_call(&func_name, tokens, idx)
+            }
             Token::LParen => {
                 *idx += 1;
                 let val = self.parse_additive(tokens, idx);
@@ -491,6 +497,155 @@ impl Spreadsheet {
             }
             _ => CellValue::Error(CellError::Syntax),
         }
+    }
+
+    fn parse_function_call(&self, func_name: &str, tokens: &[Token], idx: &mut usize) -> CellValue {
+        // Expect '('
+        if *idx >= tokens.len() || tokens[*idx] != Token::LParen {
+            return CellValue::Error(CellError::Syntax);
+        }
+        *idx += 1;
+
+        // Parse arguments
+        let mut args = Vec::new();
+
+        // Handle empty argument list
+        if *idx < tokens.len() && tokens[*idx] == Token::RParen {
+            *idx += 1;
+            return self.evaluate_function(func_name, &args);
+        }
+
+        loop {
+            let arg = self.parse_additive(tokens, idx);
+            args.push(arg);
+
+            if *idx >= tokens.len() {
+                return CellValue::Error(CellError::Syntax);
+            }
+
+            match &tokens[*idx] {
+                Token::Comma => {
+                    *idx += 1;
+                    continue;
+                }
+                Token::RParen => {
+                    *idx += 1;
+                    break;
+                }
+                _ => return CellValue::Error(CellError::Syntax),
+            }
+        }
+
+        self.evaluate_function(func_name, &args)
+    }
+
+    fn evaluate_function(&self, func_name: &str, args: &[CellValue]) -> CellValue {
+        // Check for errors in arguments first
+        for arg in args {
+            if let CellValue::Error(e) = arg {
+                return CellValue::Error(e.clone());
+            }
+        }
+
+        match func_name {
+            "POW" => self.func_pow(args),
+            "SUM" => self.func_sum(args),
+            "AVG" => self.func_avg(args),
+            "MAX" => self.func_max(args),
+            "MIN" => self.func_min(args),
+            _ => CellValue::Error(CellError::Syntax),
+        }
+    }
+
+    fn func_pow(&self, args: &[CellValue]) -> CellValue {
+        if args.len() != 2 {
+            return CellValue::Error(CellError::Syntax);
+        }
+
+        let base = match &args[0] {
+            CellValue::Number(n) => *n,
+            _ => return CellValue::Error(CellError::Value),
+        };
+
+        let exponent = match &args[1] {
+            CellValue::Number(n) => *n,
+            _ => return CellValue::Error(CellError::Value),
+        };
+
+        let result = base.powf(exponent);
+        if result.is_finite() {
+            CellValue::Number(result)
+        } else {
+            CellValue::Error(CellError::Value)
+        }
+    }
+
+    fn func_sum(&self, args: &[CellValue]) -> CellValue {
+        if args.is_empty() {
+            return CellValue::Number(0.0);
+        }
+
+        let mut sum = 0.0;
+        for arg in args {
+            match arg {
+                CellValue::Number(n) => sum += n,
+                _ => return CellValue::Error(CellError::Value),
+            }
+        }
+        CellValue::Number(sum)
+    }
+
+    fn func_avg(&self, args: &[CellValue]) -> CellValue {
+        if args.is_empty() {
+            return CellValue::Error(CellError::Syntax);
+        }
+
+        let mut sum = 0.0;
+        for arg in args {
+            match arg {
+                CellValue::Number(n) => sum += n,
+                _ => return CellValue::Error(CellError::Value),
+            }
+        }
+        CellValue::Number(sum / args.len() as f64)
+    }
+
+    fn func_max(&self, args: &[CellValue]) -> CellValue {
+        if args.is_empty() {
+            return CellValue::Error(CellError::Syntax);
+        }
+
+        let mut max = f64::NEG_INFINITY;
+        for arg in args {
+            match arg {
+                CellValue::Number(n) => {
+                    if *n > max {
+                        max = *n;
+                    }
+                }
+                _ => return CellValue::Error(CellError::Value),
+            }
+        }
+        CellValue::Number(max)
+    }
+
+    fn func_min(&self, args: &[CellValue]) -> CellValue {
+        if args.is_empty() {
+            return CellValue::Error(CellError::Syntax);
+        }
+
+        let mut min = f64::INFINITY;
+        for arg in args {
+            match arg {
+                CellValue::Number(n) => {
+                    if *n < min {
+                        min = *n;
+                    }
+                }
+                _ => return CellValue::Error(CellError::Value),
+            }
+        }
+        CellValue::Number(min)
     }
 
     fn tokenize(&self, expr: &str) -> Result<Vec<Token>, CellError> {
@@ -525,6 +680,10 @@ impl Spreadsheet {
                     tokens.push(Token::RParen);
                     i += 1;
                 }
+                ',' => {
+                    tokens.push(Token::Comma);
+                    i += 1;
+                }
                 '0'..='9' | '.' => {
                     let start = i;
                     while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
@@ -535,33 +694,45 @@ impl Spreadsheet {
                     tokens.push(Token::Number(num));
                 }
                 'A'..='Z' | 'a'..='z' => {
-                    let start_col = i;
+                    let start = i;
                     while i < chars.len() && chars[i].is_ascii_alphabetic() {
                         i += 1;
                     }
-                    let col_str: String = chars[start_col..i]
+                    let identifier: String = chars[start..i]
                         .iter()
                         .map(|c| c.to_ascii_uppercase())
                         .collect();
 
-                    let start_row = i;
-                    while i < chars.len() && chars[i].is_ascii_digit() {
-                        i += 1;
-                    }
-                    if start_row == i {
-                        return Err(CellError::Syntax);
-                    }
-                    let row_str: String = chars[start_row..i].iter().collect();
-                    let row_num = row_str.parse::<usize>().map_err(|_| CellError::Syntax)?;
-
-                    if row_num == 0 {
-                        return Err(CellError::Ref);
+                    // Peek ahead to check if it's a function call (followed by '(')
+                    let mut peek_idx = i;
+                    while peek_idx < chars.len() && chars[peek_idx].is_whitespace() {
+                        peek_idx += 1;
                     }
 
-                    let col_idx = Self::letter_to_col(&col_str)?;
-                    let row_idx = row_num - 1;
+                    if peek_idx < chars.len() && chars[peek_idx] == '(' {
+                        // It's a function
+                        tokens.push(Token::Function(identifier));
+                    } else {
+                        // It's a cell reference like A1, B2, etc.
+                        let start_row = i;
+                        while i < chars.len() && chars[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                        if start_row == i {
+                            return Err(CellError::Syntax);
+                        }
+                        let row_str: String = chars[start_row..i].iter().collect();
+                        let row_num = row_str.parse::<usize>().map_err(|_| CellError::Syntax)?;
 
-                    tokens.push(Token::CellRef(row_idx, col_idx));
+                        if row_num == 0 {
+                            return Err(CellError::Ref);
+                        }
+
+                        let col_idx = Self::letter_to_col(&identifier)?;
+                        let row_idx = row_num - 1;
+
+                        tokens.push(Token::CellRef(row_idx, col_idx));
+                    }
                 }
                 _ => return Err(CellError::Syntax),
             }
@@ -646,4 +817,6 @@ enum Token {
     Slash,
     LParen,
     RParen,
+    Function(String),
+    Comma,
 }

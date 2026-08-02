@@ -1,6 +1,46 @@
 # rSheet
 
-A **WIP** ,fast, lightweight, terminal-based spreadsheet application written in **Rust**, featuring a real-time reactive calculation engine powered by a **Directed Acyclic Graph (DAG)** and **Ratatui** for rich terminal UI.
+A **WIP**, fast, lightweight, terminal-based spreadsheet application written in **Rust**, featuring a real-time reactive calculation engine powered by a **Directed Acyclic Graph (DAG)** and **Ratatui** for rich terminal UI.
+
+## Features
+
+- **Reactive Formula Engine**: Formulas automatically recalculate when dependencies change
+- **Built-in Functions**: POW, SUM, AVG, MAX, MIN with support for nested function calls
+- **DAG-based Dependency Tracking**: Efficient change propagation using topological sorting
+- **Circular Dependency Detection**: Prevents infinite loops with cycle detection
+- **Terminal UI**: Vi-style keyboard navigation with visual cursor feedback
+- **CSV Import/Export**: Load and save spreadsheets in CSV format
+
+## Quick Start
+
+```bash
+# Run with default test file
+cargo run
+
+# Open a specific CSV file
+cargo run path/to/file.csv
+```
+
+### Keyboard Controls
+
+- `h/j/k/l` or Arrow keys: Navigate cells
+- `a` or `F2` or `Enter`: Enter edit mode
+- `Esc` or `F2` or `Enter`: Commit changes and exit edit mode
+- `s`: Save spreadsheet
+- `q`: Quit application
+
+### Function Examples
+
+```
+=pow(2,3)                    // Returns 8
+=sum(A1,B1,C1)               // Sum of three cells
+=avg(10,20,30)               // Returns 20
+=max(A1,A2,A3)               // Maximum value
+=min(B1,B2,B3)               // Minimum value
+=sum(pow(2,2),pow(3,2))      // Nested functions: 4 + 9 = 13
+```
+
+See [FUNCTIONS.md](FUNCTIONS.md) for complete function documentation.
 
 ## rSheet System Architecture & Technical Summary
 
