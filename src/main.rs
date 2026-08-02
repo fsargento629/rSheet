@@ -1,16 +1,21 @@
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use std::{env, error::Error, io};
 
+use std::time::Duration;
+
 mod app;
 mod domain;
 mod ui;
 
-use app::{App, Direction, Mode};
+use app::{App, Direction, GridConfig, Mode};
 use domain::Spreadsheet;
 use ui::CsvGrid;
 
@@ -21,6 +26,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnableMouseCapture)?;
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -40,6 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let res = run_app(&mut terminal, &mut app);
 
     // Teardown terminal
+    execute!(io::stdout(), DisableMouseCapture)?;
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -60,18 +68,22 @@ fn get_terminal_rect(
 
 fn get_visible_dims(
     terminal: &Terminal<CrosstermBackend<io::Stdout>>,
+    config: &GridConfig,
 ) -> Result<(usize, usize), Box<dyn Error>> {
     let rect = get_terminal_rect(terminal)?;
-    let visible_cols = if rect.width > 6 {
-        ((rect.width - 6) / 12) as usize
+
+    let visible_cols = if rect.width > config.header_offset_x {
+        ((rect.width - config.header_offset_x) / config.cell_width) as usize
     } else {
         0
     };
-    let visible_rows = if rect.height > 2 {
-        (rect.height - 2) as usize
+
+    let visible_rows = if rect.height > config.header_offset_y {
+        ((rect.height - config.header_offset_y) / config.cell_height) as usize
     } else {
         0
     };
+
     Ok((visible_rows, visible_cols))
 }
 
@@ -84,6 +96,7 @@ fn run_app(
             return Ok(());
         }
 
+        // 1. Render UI continuously at high refresh rate
         terminal.draw(|f| {
             let size = f.area();
             let grid = CsvGrid::new(app);
@@ -94,62 +107,86 @@ fn run_app(
             }
         })?;
 
-        if let Event::Key(key) = event::read()? {
-            if app.mode == Mode::Edit {
-                app.handle_edit_input(key);
-            } else {
-                let rect = get_terminal_rect(terminal)?;
-                match (key.modifiers, key.code) {
-                    // Home Key Combinations
-                    (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
-                    (KeyModifiers::SHIFT, KeyCode::Home) => app.move_to_start_of_col(),
-                    (_, KeyCode::Home) => app.move_to_start_line(),
-
-                    // General Actions
-                    (_, KeyCode::Char('q')) | (_, KeyCode::Char('Q')) => app.should_quit = true,
-                    (_, KeyCode::Char('s')) | (_, KeyCode::Char('S')) => app.save_spreadsheet(),
-                    (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
-
-                    // Edit Mode Entry
-                    (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) | (_, KeyCode::Enter) => {
-                        app.enter_edit_mode(None)
+        // 2. Non-blocking event check
+        if event::poll(Duration::from_millis(1))? {
+            match event::read()? {
+                // Unified Mouse Event Handler
+                Event::Mouse(mouse_event) => {
+                    match mouse_event.kind {
+                        // Capture both Down and Up so fast clicks are never dropped
+                        MouseEventKind::Down(MouseButton::Left)
+                        | MouseEventKind::Up(MouseButton::Left) => {
+                            if app.mode == Mode::Normal {
+                                app.handle_mouse_left_click(mouse_event.column, mouse_event.row);
+                            }
+                        }
+                        _ => {} // Ignore mouse movement / drag events
                     }
-                    (_, KeyCode::Char('=')) => app.enter_edit_mode(Some('='.to_string())),
-                    (_, KeyCode::Char('0'))
-                    | (_, KeyCode::Char('1'))
-                    | (_, KeyCode::Char('2'))
-                    | (_, KeyCode::Char('3'))
-                    | (_, KeyCode::Char('4'))
-                    | (_, KeyCode::Char('5'))
-                    | (_, KeyCode::Char('6'))
-                    | (_, KeyCode::Char('7'))
-                    | (_, KeyCode::Char('8'))
-                    | (_, KeyCode::Char('9')) => app.enter_edit_mode(Some(key.code.to_string())),
-
-                    // Navigation
-                    (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
-                        let (rows, cols) = get_visible_dims(terminal)?;
-                        let _ = CsvGrid::new(app).visible_dimensions(rect);
-                        app.move_cursor(Direction::Up, rows, cols);
-                    }
-                    (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
-                        let (rows, cols) = get_visible_dims(terminal)?;
-                        let _ = CsvGrid::new(app).visible_dimensions(rect);
-                        app.move_cursor(Direction::Down, rows, cols);
-                    }
-                    (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
-                        let (rows, cols) = get_visible_dims(terminal)?;
-                        let _ = CsvGrid::new(app).visible_dimensions(rect);
-                        app.move_cursor(Direction::Left, rows, cols);
-                    }
-                    (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
-                        let (rows, cols) = get_visible_dims(terminal)?;
-                        let _ = CsvGrid::new(app).visible_dimensions(rect);
-                        app.move_cursor(Direction::Right, rows, cols);
-                    }
-
-                    _ => {}
                 }
+
+                // Unified Key Event Handler
+                Event::Key(key) => {
+                    if app.mode == Mode::Edit {
+                        app.handle_edit_input(key);
+                    } else {
+                        match (key.modifiers, key.code) {
+                            // Home Key Combinations
+                            (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
+                            (KeyModifiers::SHIFT, KeyCode::Home) => app.move_to_start_of_col(),
+                            (_, KeyCode::Home) => app.move_to_start_line(),
+
+                            // General Actions
+                            (_, KeyCode::Char('q')) | (_, KeyCode::Char('Q')) => {
+                                app.should_quit = true
+                            }
+                            (_, KeyCode::Char('s')) | (_, KeyCode::Char('S')) => {
+                                app.save_spreadsheet()
+                            }
+                            (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
+
+                            // Edit Mode Entry
+                            (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) | (_, KeyCode::Enter) => {
+                                app.enter_edit_mode(None)
+                            }
+                            (_, KeyCode::Char('=')) => app.enter_edit_mode(Some('='.to_string())),
+                            (_, KeyCode::Char('0'))
+                            | (_, KeyCode::Char('1'))
+                            | (_, KeyCode::Char('2'))
+                            | (_, KeyCode::Char('3'))
+                            | (_, KeyCode::Char('4'))
+                            | (_, KeyCode::Char('5'))
+                            | (_, KeyCode::Char('6'))
+                            | (_, KeyCode::Char('7'))
+                            | (_, KeyCode::Char('8'))
+                            | (_, KeyCode::Char('9')) => {
+                                app.enter_edit_mode(Some(key.code.to_string()))
+                            }
+
+                            // Navigation (Passing &app.grid_config now)
+                            (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
+                                app.move_cursor(Direction::Up, rows, cols);
+                            }
+                            (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
+                                app.move_cursor(Direction::Down, rows, cols);
+                            }
+                            (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
+                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
+                                app.move_cursor(Direction::Left, rows, cols);
+                            }
+                            (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
+                                let (rows, cols) = get_visible_dims(terminal, &app.grid_config)?;
+                                app.move_cursor(Direction::Right, rows, cols);
+                            }
+
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Catch-all for Resize, FocusGained, FocusLost, Paste, etc.
+                _ => {}
             }
         }
     }

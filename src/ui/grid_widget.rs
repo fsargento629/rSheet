@@ -3,31 +3,31 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
-use crate::app::{App, Mode};
+use crate::app::{App, GridConfig, Mode};
 use crate::domain::Spreadsheet;
 
 pub struct CsvGrid<'a> {
     app: &'a App,
-    col_width: u16,
-    header_width: u16,
+    config: GridConfig, // Store it directly on the widget
 }
 
 impl<'a> CsvGrid<'a> {
     pub fn new(app: &'a App) -> Self {
         Self {
             app,
-            col_width: 12,
-            header_width: 6,
+            config: app.grid_config, // Populate it once when the widget is created
         }
     }
 
     pub fn visible_dimensions(&self, area: Rect) -> (usize, usize) {
-        if area.width < self.header_width || area.height < 3 {
+        if area.width < self.config.header_offset_x || area.height < self.config.header_offset_y {
             return (0, 0);
         }
 
-        let visible_cols = ((area.width - self.header_width) / self.col_width) as usize;
-        let visible_rows = (area.height - 2) as usize;
+        let visible_cols =
+            ((area.width - self.config.header_offset_x) / self.config.cell_width) as usize;
+        let visible_rows =
+            ((area.height - self.config.header_offset_y) / self.config.cell_height) as usize;
 
         (visible_rows, visible_cols)
     }
@@ -35,7 +35,7 @@ impl<'a> CsvGrid<'a> {
 
 impl<'a> Widget for CsvGrid<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width < self.header_width || area.height < 3 {
+        if area.width < self.config.header_offset_x || area.height < self.config.header_offset_y {
             return;
         }
 
@@ -61,11 +61,15 @@ impl<'a> Widget for CsvGrid<'a> {
         let (visible_rows, visible_cols) = self.visible_dimensions(area);
 
         // --- 1. Corner Box ---
-        let corner_str = format!("{:>width$} ", "", width = (self.header_width as usize) - 1);
+        let corner_str = format!(
+            "{:>width$} ",
+            "",
+            width = (self.config.header_offset_x as usize) - 1
+        );
         buf.set_string(area.x, area.y, &corner_str, default_header_style);
 
         // --- 2. Column Headers ---
-        let mut x_offset = area.x + self.header_width;
+        let mut x_offset = area.x + self.config.header_offset_x;
         for visible_col_idx in 0..visible_cols {
             let col_idx = self.app.scroll_col + visible_col_idx;
             if col_idx >= self.app.sheet.max_cols {
@@ -76,7 +80,7 @@ impl<'a> Widget for CsvGrid<'a> {
             let formatted_header = format!(
                 "{:^width$}|",
                 col_label,
-                width = (self.col_width as usize) - 1
+                width = (self.config.cell_width as usize) - 1
             );
 
             let header_style = if col_idx == self.app.cursor_col {
@@ -86,7 +90,7 @@ impl<'a> Widget for CsvGrid<'a> {
             };
 
             buf.set_string(x_offset, area.y, &formatted_header, header_style);
-            x_offset += self.col_width;
+            x_offset += self.config.cell_width;
         }
 
         // --- 3. Grid Rows & Cells ---
@@ -101,7 +105,7 @@ impl<'a> Widget for CsvGrid<'a> {
             let row_label = format!(
                 "{:>width$} ",
                 row_idx + 1,
-                width = (self.header_width as usize) - 1
+                width = (self.config.header_offset_x as usize) - 1
             );
             let row_header_style = if row_idx == self.app.cursor_row {
                 active_header_style
@@ -111,7 +115,7 @@ impl<'a> Widget for CsvGrid<'a> {
             buf.set_string(area.x, y_offset, &row_label, row_header_style);
 
             // Cells
-            let mut cell_x = area.x + self.header_width;
+            let mut cell_x = area.x + self.config.header_offset_x;
             for visible_col_idx in 0..visible_cols {
                 let col_idx = self.app.scroll_col + visible_col_idx;
                 if col_idx >= self.app.sheet.max_cols {
@@ -119,7 +123,7 @@ impl<'a> Widget for CsvGrid<'a> {
                 }
 
                 let is_active = row_idx == self.app.cursor_row && col_idx == self.app.cursor_col;
-                let text_max_len = (self.col_width as usize) - 1;
+                let text_max_len = (self.config.cell_width as usize) - 1;
 
                 let display_text = if let Some(cell) = self.app.sheet.get_cell(row_idx, col_idx) {
                     let val = cell.display_text();
@@ -150,10 +154,10 @@ impl<'a> Widget for CsvGrid<'a> {
                     "|",
                     cell_border_style,
                 );
-                cell_x += self.col_width;
+                cell_x += self.config.cell_width;
             }
 
-            y_offset += 1;
+            y_offset += self.config.cell_height;
         }
 
         // --- 4. Status Bar ---

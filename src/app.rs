@@ -14,6 +14,25 @@ pub enum Direction {
     Right,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct GridConfig {
+    pub header_offset_x: u16, // Width reserved for row numbers (e.g., "  1 | ")
+    pub header_offset_y: u16, // Height reserved for column letters
+    pub cell_width: u16,      // Fixed width of each spreadsheet column
+    pub cell_height: u16,     // Height of each row
+}
+
+impl Default for GridConfig {
+    fn default() -> Self {
+        Self {
+            header_offset_x: 6, // 6 characters wide for the left header
+            header_offset_y: 1, // 1 line for the top header
+            cell_width: 12,     // 12 characters per cell
+            cell_height: 1,     // 1 line per cell
+        }
+    }
+}
+
 pub struct App {
     pub sheet: Spreadsheet,
     pub mode: Mode,
@@ -21,6 +40,7 @@ pub struct App {
     pub cursor_col: usize,
     pub scroll_row: usize,
     pub scroll_col: usize,
+    pub grid_config: GridConfig,
 
     pub edit_buffer: String,
     pub edit_cursor_idx: usize,
@@ -38,6 +58,7 @@ impl App {
             cursor_col: 0,
             scroll_row: 0,
             scroll_col: 0,
+            grid_config: GridConfig::default(),
             edit_buffer: String::new(),
             edit_cursor_idx: 0,
             status_message: String::from("Press 'a' or F2 to edit | 's' to save | 'q' to quit"),
@@ -186,6 +207,30 @@ impl App {
     pub fn move_to_start_of_col(&mut self) {
         self.cursor_row = 0;
         self.scroll_row = 0;
+    }
+
+    pub fn handle_mouse_left_click(&mut self, mouse_x: u16, mouse_y: u16) {
+        let config = self.grid_config;
+
+        // Ensure the click is within the actual spreadsheet grid, not the headers
+        if mouse_x >= config.header_offset_x && mouse_y >= config.header_offset_y {
+            let relative_x = mouse_x - config.header_offset_x;
+            let relative_y = mouse_y - config.header_offset_y;
+
+            // Calculate which visible cell was clicked
+            let visible_col = (relative_x / config.cell_width) as usize;
+            let visible_row = (relative_y / config.cell_height) as usize;
+
+            // Add scroll offsets to convert relative screen space to absolute sheet coordinates
+            let target_col = self.scroll_col + visible_col;
+            let target_row = self.scroll_row + visible_row;
+
+            // Validate against total sheet bounds (max_rows / max_cols)
+            if target_row < self.sheet.max_rows && target_col < self.sheet.max_cols {
+                self.cursor_row = target_row;
+                self.cursor_col = target_col;
+            }
+        }
     }
 
     fn adjust_viewport(&mut self, visible_rows: usize, visible_cols: usize) {
