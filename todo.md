@@ -2,30 +2,29 @@
 
 ## Now
 
-- more complex navigation 
-  - HOME to go to start of line when in normal mode
-  - END to go to end of line when in normal mode
-  - CTRL + HOME to go to start of file when in normal mode
-  - CTRL + END to go to end of file when in normal mode
-- More complex editing
-  - Delete to delete the content of a cell, in edit mode and normal mode
-  - "=" when in normal mode should delete the cell contents, start edit mode on the cell, and automatically add a = to the start of the cell 
-  - Typing any number when in normal mode should delete the cell contents, start edit mode on the cell, and automatically add the number to the start of the cell
+- cursor capture to highlight cells, choose a cell. scroll right and left using shift + mouse wheel
 
 
 ## Next
 
-- cursor capture to highlight cells, choose a cell. scroll right and left using shift + mouse wheel
+- Special mode, similar to vim's special mode. It should triggered only in normal mode, by pressing ESC. It can be left by pressing ESC again.
+  - All special mode commands work by typing a letter, then pressing enter, when in special mode
+    - vim like jumps: 2j to jump 2 lines down, 2k to jump 2 lines up, 5l to jump 5 lines left, 5h to jump 5 lines right, if the jump goes out of bounds, it should saturate at the edge of the sheet
+    - cell jumping in special mode: for example, A2 then enter to go to cell A2
+    - d to delete the cell
+    - dd to delete the line
+    - dc to delete the column
+    - More commands to come, we should just do the easy ones first
+
+- END to go to last edited cell in line
+- SHIFT + END to go to last cell edited in col.
 
 ## Future
 
 - F3 to toggle values being shown or fomulas
 - Cosmetic improvements : header with file name, and program name 
 - merge cells feature. this would force us to include some GUI comands in the csv so that the view changes
-- even more complex navigation
-    - Special mode after pressing ESC to go to special mode (esc again to leave it). 
-      - vim like jumps, by pressing ESC to go to special mode, then 2j to jump 2 lines and so forth
-      - cell jumping in special mode (for example A2  then enter to go cell A2. the letter needs to be capitalized for obvious reasons)
+
 - language support
 - support for AA, BB, AB, so longer lines than just until Z
 - different tabs  Can ratatui tabs be used?

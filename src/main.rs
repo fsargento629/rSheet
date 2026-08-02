@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -99,45 +99,55 @@ fn run_app(
                 app.handle_edit_input(key);
             } else {
                 let rect = get_terminal_rect(terminal)?;
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
-                    KeyCode::Char('s') | KeyCode::Char('S') => app.save_spreadsheet(),
-                    KeyCode::Delete | KeyCode::Backspace => app.delete_cell(),
-                    KeyCode::Char('a') | KeyCode::F(2) | KeyCode::Enter => {
+                match (key.modifiers, key.code) {
+                    // Home Key Combinations
+                    (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
+                    (KeyModifiers::SHIFT, KeyCode::Home) => app.move_to_start_of_col(),
+                    (_, KeyCode::Home) => app.move_to_start_line(),
+
+                    // General Actions
+                    (_, KeyCode::Char('q')) | (_, KeyCode::Char('Q')) => app.should_quit = true,
+                    (_, KeyCode::Char('s')) | (_, KeyCode::Char('S')) => app.save_spreadsheet(),
+                    (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
+
+                    // Edit Mode Entry
+                    (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) | (_, KeyCode::Enter) => {
                         app.enter_edit_mode(None)
                     }
-                    KeyCode::Char('=') => app.enter_edit_mode(Some('='.to_string())),
-                    KeyCode::Char('0')
-                    | KeyCode::Char('1')
-                    | KeyCode::Char('2')
-                    | KeyCode::Char('3')
-                    | KeyCode::Char('4')
-                    | KeyCode::Char('5')
-                    | KeyCode::Char('6')
-                    | KeyCode::Char('7')
-                    | KeyCode::Char('8')
-                    | KeyCode::Char('9') => app.enter_edit_mode(Some(key.code.to_string())),
-                    KeyCode::Up | KeyCode::Char('k') => {
+                    (_, KeyCode::Char('=')) => app.enter_edit_mode(Some('='.to_string())),
+                    (_, KeyCode::Char('0'))
+                    | (_, KeyCode::Char('1'))
+                    | (_, KeyCode::Char('2'))
+                    | (_, KeyCode::Char('3'))
+                    | (_, KeyCode::Char('4'))
+                    | (_, KeyCode::Char('5'))
+                    | (_, KeyCode::Char('6'))
+                    | (_, KeyCode::Char('7'))
+                    | (_, KeyCode::Char('8'))
+                    | (_, KeyCode::Char('9')) => app.enter_edit_mode(Some(key.code.to_string())),
+
+                    // Navigation
+                    (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
                         let (rows, cols) = get_visible_dims(terminal)?;
                         let _ = CsvGrid::new(app).visible_dimensions(rect);
                         app.move_cursor(Direction::Up, rows, cols);
                     }
-                    KeyCode::Down | KeyCode::Char('j') => {
+                    (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
                         let (rows, cols) = get_visible_dims(terminal)?;
                         let _ = CsvGrid::new(app).visible_dimensions(rect);
                         app.move_cursor(Direction::Down, rows, cols);
                     }
-                    KeyCode::Left | KeyCode::Char('h') => {
+                    (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
                         let (rows, cols) = get_visible_dims(terminal)?;
                         let _ = CsvGrid::new(app).visible_dimensions(rect);
                         app.move_cursor(Direction::Left, rows, cols);
                     }
-                    KeyCode::Right | KeyCode::Char('l') => {
+                    (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
                         let (rows, cols) = get_visible_dims(terminal)?;
                         let _ = CsvGrid::new(app).visible_dimensions(rect);
                         app.move_cursor(Direction::Right, rows, cols);
                     }
-                    KeyCode::Home => app.move_to_start_line(),
+
                     _ => {}
                 }
             }
