@@ -102,7 +102,21 @@ fn run_app(
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
                     KeyCode::Char('s') | KeyCode::Char('S') => app.save_spreadsheet(),
-                    KeyCode::Char('a') | KeyCode::F(2) | KeyCode::Enter => app.enter_edit_mode(),
+                    KeyCode::Delete | KeyCode::Backspace => app.delete_cell(),
+                    KeyCode::Char('a') | KeyCode::F(2) | KeyCode::Enter => {
+                        app.enter_edit_mode(None)
+                    }
+                    KeyCode::Char('=') => app.enter_edit_mode(Some('='.to_string())),
+                    KeyCode::Char('0')
+                    | KeyCode::Char('1')
+                    | KeyCode::Char('2')
+                    | KeyCode::Char('3')
+                    | KeyCode::Char('4')
+                    | KeyCode::Char('5')
+                    | KeyCode::Char('6')
+                    | KeyCode::Char('7')
+                    | KeyCode::Char('8')
+                    | KeyCode::Char('9') => app.enter_edit_mode(Some(key.code.to_string())),
                     KeyCode::Up | KeyCode::Char('k') => {
                         let (rows, cols) = get_visible_dims(terminal)?;
                         let _ = CsvGrid::new(app).visible_dimensions(rect);
@@ -123,6 +137,7 @@ fn run_app(
                         let _ = CsvGrid::new(app).visible_dimensions(rect);
                         app.move_cursor(Direction::Right, rows, cols);
                     }
+                    KeyCode::Home => app.move_to_start_line(),
                     _ => {}
                 }
             }

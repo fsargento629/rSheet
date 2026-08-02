@@ -45,14 +45,18 @@ impl App {
         }
     }
 
-    pub fn enter_edit_mode(&mut self) {
+    pub fn enter_edit_mode(&mut self, initial_value: Option<String>) {
         self.mode = Mode::Edit;
-        let current_raw = self
-            .sheet
-            .get_cell(self.cursor_row, self.cursor_col)
-            .map(|c| c.raw.as_str())
-            .unwrap_or("");
-        self.edit_buffer = current_raw.to_string();
+
+        self.edit_buffer = match initial_value {
+            Some(val) => val,
+            None => self
+                .sheet
+                .get_cell(self.cursor_row, self.cursor_col)
+                .map(|c| c.raw.clone())
+                .unwrap_or_default(),
+        };
+
         self.edit_cursor_idx = self.edit_buffer.chars().count();
         self.status_message = String::from("EDIT MODE -- Press Enter to commit | Esc to cancel");
     }
@@ -68,6 +72,12 @@ impl App {
         self.mode = Mode::Normal;
         self.edit_buffer.clear();
         self.edit_cursor_idx = 0;
+    }
+
+    pub fn delete_cell(&mut self) {
+        self.sheet
+            .set_cell(self.cursor_row, self.cursor_col, String::new());
+        self.status_message = String::from("Cell deleted");
     }
 
     pub fn handle_edit_input(&mut self, key: KeyEvent) {
@@ -161,6 +171,23 @@ impl App {
         self.adjust_viewport(visible_rows, visible_cols);
     }
 
+    pub fn move_to_start(&mut self) {
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        self.scroll_row = 0;
+        self.scroll_col = 0;
+    }
+
+    pub fn move_to_start_line(&mut self) {
+        self.cursor_col = 0;
+        self.scroll_col = 0;
+    }
+
+    pub fn move_to_start_of_col(&mut self) {
+        self.cursor_row = 0;
+        self.scroll_row = 0;
+    }
+
     fn adjust_viewport(&mut self, visible_rows: usize, visible_cols: usize) {
         if visible_rows == 0 || visible_cols == 0 {
             return;
@@ -199,7 +226,7 @@ mod tests {
         let sheet = Spreadsheet::new(10, 10);
         let mut app = App::new(sheet);
 
-        app.enter_edit_mode();
+        app.enter_edit_mode(None);
         assert_eq!(app.mode, Mode::Edit);
 
         // Type "123"
@@ -219,7 +246,7 @@ mod tests {
         let sheet = Spreadsheet::new(10, 10);
         let mut app = App::new(sheet);
 
-        app.enter_edit_mode();
+        app.enter_edit_mode(None);
         app.handle_edit_input(make_key_event(KeyCode::Char('4')));
         app.handle_edit_input(make_key_event(KeyCode::Char('2')));
 
