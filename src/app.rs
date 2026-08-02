@@ -1,5 +1,6 @@
 use crate::domain::Spreadsheet;
 use crossterm::event::{KeyCode, KeyEvent};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -47,6 +48,10 @@ pub struct App {
 
     pub status_message: String,
     pub should_quit: bool,
+
+    // For tracking mouse click events and cell selection
+    pub last_click_time: Option<Instant>,
+    pub last_clicked_cell: Option<(usize, usize)>,
 }
 
 impl App {
@@ -63,6 +68,8 @@ impl App {
             edit_cursor_idx: 0,
             status_message: String::from("Press 'a' or F2 to edit | 's' to save | 'q' to quit"),
             should_quit: false,
+            last_click_time: None,
+            last_clicked_cell: None,
         }
     }
 
@@ -227,8 +234,34 @@ impl App {
 
             // Validate against total sheet bounds (max_rows / max_cols)
             if target_row < self.sheet.max_rows && target_col < self.sheet.max_cols {
+                let now = Instant::now();
+                let double_click_threshold = std::time::Duration::from_millis(300);
+
+                // Check if this click matches the previous target cell and occurred within double_click_threshold
+                let is_double_click = match (self.last_click_time, self.last_clicked_cell) {
+                    (Some(last_time), Some((last_row, last_col))) => {
+                        now.duration_since(last_time) <= double_click_threshold
+                            && last_row == target_row
+                            && last_col == target_col
+                    }
+                    _ => false,
+                };
+
+                // Move selection to target cell regardless
                 self.cursor_row = target_row;
                 self.cursor_col = target_col;
+
+                if is_double_click {
+                    // Trigger edit mode on double-click
+                    self.enter_edit_mode(None);
+                    // Reset click tracking so a 3rd fast click doesn't trigger another toggle
+                    self.last_click_time = None;
+                    self.last_clicked_cell = None;
+                } else {
+                    // Save state for potential second click
+                    self.last_click_time = Some(now);
+                    self.last_clicked_cell = Some((target_row, target_col));
+                }
             }
         }
     }

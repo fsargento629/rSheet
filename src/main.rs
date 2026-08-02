@@ -113,9 +113,8 @@ fn run_app(
                 // Unified Mouse Event Handler
                 Event::Mouse(mouse_event) => {
                     match mouse_event.kind {
-                        // Capture both Down and Up so fast clicks are never dropped
-                        MouseEventKind::Down(MouseButton::Left)
-                        | MouseEventKind::Up(MouseButton::Left) => {
+                        // Trigger strictly on MouseDown to ensure clean single & double click registration
+                        MouseEventKind::Down(MouseButton::Left) => {
                             if app.mode == Mode::Normal {
                                 app.handle_mouse_left_click(mouse_event.column, mouse_event.row);
                             }
