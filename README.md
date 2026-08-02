@@ -5,7 +5,8 @@ A **WIP**, fast, lightweight, terminal-based spreadsheet application written in 
 ## Features
 
 - **Reactive Formula Engine**: Formulas automatically recalculate when dependencies change
-- **Built-in Functions**: POW, SUM, AVG, MAX, MIN with support for nested function calls
+- **Built-in Functions**: POW, SUM, AVG, MAX, MIN, COUNT, SQRT, MEDIAN
+- **Cell Ranges & Multi-Ranges**: Support for single references (`A1`), cell ranges (`A1:A10`), and multiple ranges (`A1:A10, B1:B10`)
 - **DAG-based Dependency Tracking**: Efficient change propagation using topological sorting
 - **Circular Dependency Detection**: Prevents infinite loops with cycle detection
 - **Terminal UI**: Vi-style keyboard navigation with visual cursor feedback
@@ -32,12 +33,13 @@ cargo run path/to/file.csv
 ### Function Examples
 
 ```
-=pow(2,3)                    // Returns 8
-=sum(A1,B1,C1)               // Sum of three cells
-=avg(10,20,30)               // Returns 20
-=max(A1,A2,A3)               // Maximum value
-=min(B1,B2,B3)               // Minimum value
-=sum(pow(2,2),pow(3,2))      // Nested functions: 4 + 9 = 13
+=sum(A1:A10)                 // Sum of a single range
+=sum(A1:A10, B1:B10)         // Sum of multiple ranges
+=avg(A1:C5)                  // Average of a 2D range
+=count(A1:A10)               // Count numeric values
+=sqrt(16)                    // Square root: returns 4
+=median(A1:A5)               // Median of range values
+=sum(pow(2,2), sqtr(16))     // Nested function calls
 ```
 
 See [FUNCTIONS.md](FUNCTIONS.md) for complete function documentation.
@@ -82,7 +84,10 @@ The system relies on a **Directed Acyclic Graph (DAG)** to form a reactive compu
     Manages the interactive user session. It maintains the current mode (Normal vs. Edit), tracks cursor coordinates, and computes the auto-scrolling viewport boundaries to ensure the active cell remains visible during navigation.
 
   * src/domain/sheet.rs (Core Domain & Graph Engine):
-    Encapsulates all business logic and data persistence. This module manages the 2D grid matrix, tracks adjacency lists for cellular dependencies, parses raw text into mathematical formulas, and executes the topological evaluation algorithms.
+    Encapsulates grid management and data persistence. This module manages the 2D grid matrix, tracks adjacency lists for cellular dependencies, parses raw text into mathematical formulas, and executes topological evaluation algorithms.
+
+  * src/domain/functions.rs (Formula Functions):
+    Implements all built-in spreadsheet functions (POW, SUM, AVG, MAX, MIN, COUNT, SQRT, MEDIAN) in a dedicated, modular file.
 
   * src/ui/ (Presentation Layer):
     Houses the custom ratatui widgets, primarily grid_widget.rs. It translates the viewport coordinates provided by app.rs into formatted terminal blocks, rendering row headers, column headers, cell values, and conditional formatting (such as error states and cursor highlights).

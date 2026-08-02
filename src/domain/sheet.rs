@@ -1,3 +1,4 @@
+use crate::domain::functions;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::File;
@@ -213,66 +214,65 @@ impl Spreadsheet {
 
     fn clear_dependencies(&mut self, cell: (usize, usize)) {
         if let Some(old_deps) = self.dependencies.remove(&cell) {
-            for old_dep in old_deps {
-                if let Some(dep_set) = self.dependents.get_mut(&old_dep) {
-                    dep_set.remove(&cell);
+            for dep in old_deps {
+                if let Some(set) = self.dependents.get_mut(&dep) {
+                    set.remove(&cell);
                 }
             }
         }
     }
 
-    /// Recomputes `start` and all cells that depend on it in Topological Sort Order (Kahn's Algorithm)
     fn propagate_changes(&mut self, start: (usize, usize)) {
-        let order = self.get_topological_dependents(start);
-        for (r, c) in order {
+        let eval_order = self.get_topological_dependents(start);
+        for (r, c) in eval_order {
             self.recompute_cell(r, c);
         }
     }
 
-    /// Returns all cells reachable from `start` in topological order (dependencies evaluated first)
     fn get_topological_dependents(&self, start: (usize, usize)) -> Vec<(usize, usize)> {
-        let mut reachable = HashSet::new();
+        let mut affected = HashSet::new();
         let mut queue = vec![start];
+        affected.insert(start);
 
         while let Some(curr) = queue.pop() {
-            if reachable.insert(curr) {
-                if let Some(deps) = self.dependents.get(&curr) {
-                    for &next_cell in deps {
-                        queue.push(next_cell);
+            if let Some(deps) = self.dependents.get(&curr) {
+                for &d in deps {
+                    if affected.insert(d) {
+                        queue.push(d);
                     }
                 }
             }
         }
 
-        // Compute in-degrees on the reachable subgraph
         let mut in_degree: HashMap<(usize, usize), usize> = HashMap::new();
-        for &cell in &reachable {
-            in_degree.entry(cell).or_insert(0);
-            if let Some(deps) = self.dependents.get(&cell) {
-                for &next_cell in deps {
-                    if reachable.contains(&next_cell) {
-                        *in_degree.entry(next_cell).or_insert(0) += 1;
+        for &node in &affected {
+            in_degree.entry(node).or_insert(0);
+            if let Some(deps) = self.dependencies.get(&node) {
+                for &dep in deps {
+                    if affected.contains(&dep) {
+                        *in_degree.entry(node).or_insert(0) += 1;
                     }
                 }
             }
         }
 
-        let mut ready: Vec<(usize, usize)> = reachable
+        let mut ready: Vec<(usize, usize)> = in_degree
             .iter()
-            .cloned()
-            .filter(|&c| in_degree.get(&c) == Some(&0))
+            .filter(|&(_, &deg)| deg == 0)
+            .map(|(&node, _)| node)
             .collect();
 
         let mut sorted = Vec::new();
-        while let Some(cell) = ready.pop() {
-            sorted.push(cell);
-            if let Some(deps) = self.dependents.get(&cell) {
-                for &next_cell in deps {
-                    if reachable.contains(&next_cell) {
-                        if let Some(deg) = in_degree.get_mut(&next_cell) {
+        while let Some(node) = ready.pop() {
+            sorted.push(node);
+
+            if let Some(deps) = self.dependents.get(&node) {
+                for &dep in deps {
+                    if affected.contains(&dep) {
+                        if let Some(deg) = in_degree.get_mut(&dep) {
                             *deg -= 1;
                             if *deg == 0 {
-                                ready.push(next_cell);
+                                ready.push(dep);
                             }
                         }
                     }
@@ -280,21 +280,18 @@ impl Spreadsheet {
             }
         }
 
-        if !sorted.contains(&start) {
-            sorted.insert(0, start);
-        }
-
         sorted
     }
 
-    fn recompute_cell(&mut self, row: usize, col: usize) {
-        let raw = self.data[row][col].raw.clone();
+    fn recompute_cell(&mut self, r: usize, c: usize) {
+        let raw = self.data[r][c].raw.clone();
         let trimmed = raw.trim();
+
         if trimmed.starts_with('=') {
-            let res = self.eval_expression(&trimmed[1..]);
-            self.data[row][col].computed = res;
+            let expr = &trimmed[1..];
+            self.data[r][c].computed = self.eval_expression(expr);
         } else {
-            self.data[row][col].evaluate_static();
+            self.data[r][c].evaluate_static();
         }
     }
 
@@ -304,12 +301,11 @@ impl Spreadsheet {
 
         for r in 0..self.max_rows {
             for c in 0..self.max_cols {
-                let trimmed = self.data[r][c].raw.trim().to_string();
+                let trimmed = self.data[r][c].raw.trim();
                 if trimmed.starts_with('=') {
-                    let refs = self.extract_references(&trimmed[1..]);
-                    if self.creates_cycle((r, c), &refs) {
-                        self.data[r][c].computed = CellValue::Error(CellError::Circular);
-                    } else {
+                    let expr = &trimmed[1..];
+                    let refs = self.extract_references(expr);
+                    if !refs.is_empty() {
                         self.dependencies.insert((r, c), refs.clone());
                         for dep in refs {
                             self.dependents.entry(dep).or_default().insert((r, c));
@@ -330,14 +326,50 @@ impl Spreadsheet {
         let mut refs = HashSet::new();
         if let Ok(tokens) = self.tokenize(expr) {
             for tok in tokens {
-                if let Token::CellRef(r, c) = tok {
-                    if r < self.max_rows && c < self.max_cols {
-                        refs.insert((r, c));
+                match tok {
+                    Token::CellRef(r, c) => {
+                        if r < self.max_rows && c < self.max_cols {
+                            refs.insert((r, c));
+                        }
                     }
+                    Token::Range(r1, c1, r2, c2) => {
+                        let min_r = r1.min(r2);
+                        let max_r = r1.max(r2);
+                        let min_c = c1.min(c2);
+                        let max_c = c1.max(c2);
+                        for r in min_r..=max_r {
+                            for c in min_c..=max_c {
+                                if r < self.max_rows && c < self.max_cols {
+                                    refs.insert((r, c));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
         refs
+    }
+
+    pub(crate) fn eval_cell_value(&self, row: usize, col: usize) -> CellValue {
+        if row >= self.max_rows || col >= self.max_cols {
+            return CellValue::Error(CellError::Ref);
+        }
+
+        match &self.data[row][col].computed {
+            CellValue::Number(n) => CellValue::Number(*n),
+            CellValue::Text(s) => {
+                if let Ok(n) = s.parse::<f64>() {
+                    CellValue::Number(n)
+                } else if s.is_empty() {
+                    CellValue::Number(0.0)
+                } else {
+                    CellValue::Error(CellError::Value)
+                }
+            }
+            CellValue::Error(e) => CellValue::Error(e.clone()),
+        }
     }
 
     fn eval_expression(&self, expr: &str) -> CellValue {
@@ -461,24 +493,7 @@ impl Spreadsheet {
                 let row = *r;
                 let col = *c;
                 *idx += 1;
-
-                if row >= self.max_rows || col >= self.max_cols {
-                    return CellValue::Error(CellError::Ref);
-                }
-
-                match &self.data[row][col].computed {
-                    CellValue::Number(n) => CellValue::Number(*n),
-                    CellValue::Text(s) => {
-                        if let Ok(n) = s.parse::<f64>() {
-                            CellValue::Number(n)
-                        } else if s.is_empty() {
-                            CellValue::Number(0.0)
-                        } else {
-                            CellValue::Error(CellError::Value)
-                        }
-                    }
-                    CellValue::Error(e) => CellValue::Error(e.clone()),
-                }
+                self.eval_cell_value(row, col)
             }
             Token::Function(name) => {
                 let func_name = name.clone();
@@ -512,12 +527,34 @@ impl Spreadsheet {
         // Handle empty argument list
         if *idx < tokens.len() && tokens[*idx] == Token::RParen {
             *idx += 1;
-            return self.evaluate_function(func_name, &args);
+            return functions::evaluate_function(func_name, &args);
         }
 
         loop {
-            let arg = self.parse_additive(tokens, idx);
-            args.push(arg);
+            if *idx >= tokens.len() {
+                return CellValue::Error(CellError::Syntax);
+            }
+
+            match &tokens[*idx] {
+                Token::Range(r1, c1, r2, c2) => {
+                    let (r1, c1, r2, c2) = (*r1, *c1, *r2, *c2);
+                    *idx += 1;
+                    let min_r = r1.min(r2);
+                    let max_r = r1.max(r2);
+                    let min_c = c1.min(c2);
+                    let max_c = c1.max(c2);
+
+                    for r in min_r..=max_r {
+                        for c in min_c..=max_c {
+                            args.push(self.eval_cell_value(r, c));
+                        }
+                    }
+                }
+                _ => {
+                    let arg = self.parse_additive(tokens, idx);
+                    args.push(arg);
+                }
+            }
 
             if *idx >= tokens.len() {
                 return CellValue::Error(CellError::Syntax);
@@ -536,116 +573,7 @@ impl Spreadsheet {
             }
         }
 
-        self.evaluate_function(func_name, &args)
-    }
-
-    fn evaluate_function(&self, func_name: &str, args: &[CellValue]) -> CellValue {
-        // Check for errors in arguments first
-        for arg in args {
-            if let CellValue::Error(e) = arg {
-                return CellValue::Error(e.clone());
-            }
-        }
-
-        match func_name {
-            "POW" => self.func_pow(args),
-            "SUM" => self.func_sum(args),
-            "AVG" => self.func_avg(args),
-            "MAX" => self.func_max(args),
-            "MIN" => self.func_min(args),
-            _ => CellValue::Error(CellError::Syntax),
-        }
-    }
-
-    fn func_pow(&self, args: &[CellValue]) -> CellValue {
-        if args.len() != 2 {
-            return CellValue::Error(CellError::Syntax);
-        }
-
-        let base = match &args[0] {
-            CellValue::Number(n) => *n,
-            _ => return CellValue::Error(CellError::Value),
-        };
-
-        let exponent = match &args[1] {
-            CellValue::Number(n) => *n,
-            _ => return CellValue::Error(CellError::Value),
-        };
-
-        let result = base.powf(exponent);
-        if result.is_finite() {
-            CellValue::Number(result)
-        } else {
-            CellValue::Error(CellError::Value)
-        }
-    }
-
-    fn func_sum(&self, args: &[CellValue]) -> CellValue {
-        if args.is_empty() {
-            return CellValue::Number(0.0);
-        }
-
-        let mut sum = 0.0;
-        for arg in args {
-            match arg {
-                CellValue::Number(n) => sum += n,
-                _ => return CellValue::Error(CellError::Value),
-            }
-        }
-        CellValue::Number(sum)
-    }
-
-    fn func_avg(&self, args: &[CellValue]) -> CellValue {
-        if args.is_empty() {
-            return CellValue::Error(CellError::Syntax);
-        }
-
-        let mut sum = 0.0;
-        for arg in args {
-            match arg {
-                CellValue::Number(n) => sum += n,
-                _ => return CellValue::Error(CellError::Value),
-            }
-        }
-        CellValue::Number(sum / args.len() as f64)
-    }
-
-    fn func_max(&self, args: &[CellValue]) -> CellValue {
-        if args.is_empty() {
-            return CellValue::Error(CellError::Syntax);
-        }
-
-        let mut max = f64::NEG_INFINITY;
-        for arg in args {
-            match arg {
-                CellValue::Number(n) => {
-                    if *n > max {
-                        max = *n;
-                    }
-                }
-                _ => return CellValue::Error(CellError::Value),
-            }
-        }
-        CellValue::Number(max)
-    }
-
-    fn func_min(&self, args: &[CellValue]) -> CellValue {
-        if args.is_empty() {
-            return CellValue::Error(CellError::Syntax);
-        }
-
-        let mut min = f64::INFINITY;
-        for arg in args {
-            match arg {
-                CellValue::Number(n) => {
-                    if *n < min {
-                        min = *n;
-                    }
-                }
-                _ => return CellValue::Error(CellError::Value),
-            }
-        }
-        CellValue::Number(min)
+        functions::evaluate_function(func_name, &args)
     }
 
     fn tokenize(&self, expr: &str) -> Result<Vec<Token>, CellError> {
@@ -731,6 +659,58 @@ impl Spreadsheet {
                         let col_idx = Self::letter_to_col(&identifier)?;
                         let row_idx = row_num - 1;
 
+                        // Check if followed by colon ':' for cell range (e.g., A1:B10)
+                        let mut colon_peek = i;
+                        while colon_peek < chars.len() && chars[colon_peek].is_whitespace() {
+                            colon_peek += 1;
+                        }
+
+                        if colon_peek < chars.len() && chars[colon_peek] == ':' {
+                            let mut ref2_start = colon_peek + 1;
+                            while ref2_start < chars.len() && chars[ref2_start].is_whitespace() {
+                                ref2_start += 1;
+                            }
+
+                            if ref2_start < chars.len() && chars[ref2_start].is_ascii_alphabetic() {
+                                let mut ref2_letter_end = ref2_start;
+                                while ref2_letter_end < chars.len()
+                                    && chars[ref2_letter_end].is_ascii_alphabetic()
+                                {
+                                    ref2_letter_end += 1;
+                                }
+                                let identifier2: String = chars[ref2_start..ref2_letter_end]
+                                    .iter()
+                                    .map(|c| c.to_ascii_uppercase())
+                                    .collect();
+
+                                let mut ref2_digit_end = ref2_letter_end;
+                                while ref2_digit_end < chars.len()
+                                    && chars[ref2_digit_end].is_ascii_digit()
+                                {
+                                    ref2_digit_end += 1;
+                                }
+
+                                if ref2_digit_end > ref2_letter_end {
+                                    let row2_str: String =
+                                        chars[ref2_letter_end..ref2_digit_end].iter().collect();
+                                    if let Ok(row2_num) = row2_str.parse::<usize>() {
+                                        if row2_num > 0 {
+                                            if let Ok(col_idx2) = Self::letter_to_col(&identifier2)
+                                            {
+                                                let row_idx2 = row2_num - 1;
+                                                i = ref2_digit_end;
+                                                tokens.push(Token::Range(
+                                                    row_idx, col_idx, row_idx2, col_idx2,
+                                                ));
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return Err(CellError::Syntax);
+                        }
+
                         tokens.push(Token::CellRef(row_idx, col_idx));
                     }
                 }
@@ -811,6 +791,7 @@ impl Spreadsheet {
 enum Token {
     Number(f64),
     CellRef(usize, usize),
+    Range(usize, usize, usize, usize),
     Plus,
     Minus,
     Star,
@@ -819,4 +800,85 @@ enum Token {
     RParen,
     Function(String),
     Comma,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cell_range_functions() {
+        let mut sheet = Spreadsheet::new(10, 10);
+        // Set values A1:A5 = 1..5
+        for i in 1..=5 {
+            sheet.set_cell(i - 1, 0, i.to_string());
+        }
+
+        // SUM(A1:A5) = 15
+        sheet.set_cell(0, 1, "=SUM(A1:A5)".to_string());
+        assert_eq!(
+            sheet.get_cell(0, 1).unwrap().computed,
+            CellValue::Number(15.0)
+        );
+
+        // AVG(A1:A5) = 3
+        sheet.set_cell(1, 1, "=AVG(A1:A5)".to_string());
+        assert_eq!(
+            sheet.get_cell(1, 1).unwrap().computed,
+            CellValue::Number(3.0)
+        );
+
+        // COUNT(A1:A5) = 5
+        sheet.set_cell(2, 1, "=COUNT(A1:A5)".to_string());
+        assert_eq!(
+            sheet.get_cell(2, 1).unwrap().computed,
+            CellValue::Number(5.0)
+        );
+
+        // MEDIAN(A1:A5) = 3
+        sheet.set_cell(3, 1, "=MEDIAN(A1:A5)".to_string());
+        assert_eq!(
+            sheet.get_cell(3, 1).unwrap().computed,
+            CellValue::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn test_multiple_cell_ranges() {
+        let mut sheet = Spreadsheet::new(10, 10);
+        // A1:A3 = 10, 20, 30
+        sheet.set_cell(0, 0, "10".to_string());
+        sheet.set_cell(1, 0, "20".to_string());
+        sheet.set_cell(2, 0, "30".to_string());
+
+        // B1:B3 = 5, 15, 25
+        sheet.set_cell(0, 1, "5".to_string());
+        sheet.set_cell(1, 1, "15".to_string());
+        sheet.set_cell(2, 1, "25".to_string());
+
+        // SUM(A1:A3, B1:B3) = 105
+        sheet.set_cell(0, 2, "=SUM(A1:A3, B1:B3)".to_string());
+        assert_eq!(
+            sheet.get_cell(0, 2).unwrap().computed,
+            CellValue::Number(105.0)
+        );
+
+        // Reactive update: change B1 from 5 to 10 -> sum should become 110
+        sheet.set_cell(0, 1, "10".to_string());
+        assert_eq!(
+            sheet.get_cell(0, 2).unwrap().computed,
+            CellValue::Number(110.0)
+        );
+    }
+
+    #[test]
+    fn test_sqrt_function() {
+        let mut sheet = Spreadsheet::new(10, 10);
+        sheet.set_cell(0, 0, "16".to_string());
+        sheet.set_cell(0, 1, "=SQRT(A1)".to_string());
+        assert_eq!(
+            sheet.get_cell(0, 1).unwrap().computed,
+            CellValue::Number(4.0)
+        );
+    }
 }
