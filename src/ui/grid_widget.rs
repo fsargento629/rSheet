@@ -58,11 +58,6 @@ impl<'a> Widget for CsvGrid<'a> {
             .fg(Color::White)
             .add_modifier(Modifier::BOLD);
 
-        let text_cursor_char_style = Style::default()
-            .bg(Color::Yellow)
-            .fg(Color::Black)
-            .add_modifier(Modifier::BOLD);
-
         let (visible_rows, visible_cols) = self.visible_dimensions(area);
 
         // --- 1. Corner Box ---
@@ -126,49 +121,28 @@ impl<'a> Widget for CsvGrid<'a> {
                 let is_active = row_idx == self.app.cursor_row && col_idx == self.app.cursor_col;
                 let text_max_len = (self.col_width as usize) - 1;
 
-                if is_active && self.app.mode == Mode::Edit {
-                    let raw_buffer = &self.app.edit_buffer;
-                    let display_text = if raw_buffer.len() > text_max_len {
-                        format!("{}…", &raw_buffer[..text_max_len - 1])
+                let display_text = if let Some(cell) = self.app.sheet.get_cell(row_idx, col_idx) {
+                    let val = cell.display_text();
+                    if val.len() > text_max_len {
+                        format!("{}…", &val[..text_max_len - 1])
                     } else {
-                        format!("{:<width$}", raw_buffer, width = text_max_len)
-                    };
-
-                    buf.set_string(cell_x, y_offset, &display_text, edit_cursor_style);
-
-                    if self.app.edit_cursor_idx < text_max_len {
-                        let cursor_char = raw_buffer
-                            .chars()
-                            .nth(self.app.edit_cursor_idx)
-                            .unwrap_or(' ');
-                        buf.set_string(
-                            cell_x + (self.app.edit_cursor_idx as u16),
-                            y_offset,
-                            cursor_char.to_string(),
-                            text_cursor_char_style,
-                        );
+                        format!("{:<width$}", val, width = text_max_len)
                     }
                 } else {
-                    let display_text = if let Some(cell) = self.app.sheet.get_cell(row_idx, col_idx)
-                    {
-                        let val = cell.display_text();
-                        if val.len() > text_max_len {
-                            format!("{}…", &val[..text_max_len - 1])
-                        } else {
-                            format!("{:<width$}", val, width = text_max_len)
-                        }
-                    } else {
-                        format!("{:<width$}", "", width = text_max_len)
-                    };
+                    format!("{:<width$}", "", width = text_max_len)
+                };
 
-                    let current_cell_style = if is_active {
+                let current_cell_style = if is_active {
+                    if self.app.mode == Mode::Edit {
+                        edit_cursor_style
+                    } else {
                         normal_cursor_style
-                    } else {
-                        cell_text_style
-                    };
+                    }
+                } else {
+                    cell_text_style
+                };
 
-                    buf.set_string(cell_x, y_offset, &display_text, current_cell_style);
-                }
+                buf.set_string(cell_x, y_offset, &display_text, current_cell_style);
 
                 buf.set_string(
                     cell_x + (text_max_len as u16),

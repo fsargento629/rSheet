@@ -1,9 +1,9 @@
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
+use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use std::{env, error::Error, io};
 
 mod app;
@@ -88,6 +88,10 @@ fn run_app(
             let size = f.area();
             let grid = CsvGrid::new(app);
             f.render_widget(grid, size);
+
+            if app.mode == Mode::Edit {
+                ui::render_edit_modal(f, app);
+            }
         })?;
 
         if let Event::Key(key) = event::read()? {

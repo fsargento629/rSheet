@@ -54,7 +54,7 @@ impl App {
             .unwrap_or("");
         self.edit_buffer = current_raw.to_string();
         self.edit_cursor_idx = self.edit_buffer.chars().count();
-        self.status_message = String::from("EDIT MODE -- Press Esc or F2 to commit changes");
+        self.status_message = String::from("EDIT MODE -- Press Enter to commit | Esc to cancel");
     }
 
     pub fn exit_edit_mode(&mut self, commit: bool) {
@@ -72,8 +72,11 @@ impl App {
 
     pub fn handle_edit_input(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::F(2) | KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::F(2) => {
                 self.exit_edit_mode(true);
+            }
+            KeyCode::Esc => {
+                self.exit_edit_mode(false);
             }
             KeyCode::Left => {
                 if self.edit_cursor_idx > 0 {
@@ -84,6 +87,12 @@ impl App {
                 if self.edit_cursor_idx < self.edit_buffer.chars().count() {
                     self.edit_cursor_idx += 1;
                 }
+            }
+            KeyCode::Home => {
+                self.edit_cursor_idx = 0;
+            }
+            KeyCode::End => {
+                self.edit_cursor_idx = self.edit_buffer.chars().count();
             }
             KeyCode::Char(c) => {
                 let byte_idx = self.char_idx_to_byte_idx(self.edit_cursor_idx);
@@ -168,5 +177,55 @@ impl App {
         } else if self.cursor_col >= self.scroll_col + visible_cols {
             self.scroll_col = self.cursor_col - visible_cols + 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn make_key_event(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn test_enter_and_cancel_edit_mode() {
+        let sheet = Spreadsheet::new(10, 10);
+        let mut app = App::new(sheet);
+
+        app.enter_edit_mode();
+        assert_eq!(app.mode, Mode::Edit);
+
+        // Type "123"
+        app.handle_edit_input(make_key_event(KeyCode::Char('1')));
+        app.handle_edit_input(make_key_event(KeyCode::Char('2')));
+        app.handle_edit_input(make_key_event(KeyCode::Char('3')));
+        assert_eq!(app.edit_buffer, "123");
+
+        // Cancel with Esc
+        app.handle_edit_input(make_key_event(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.sheet.get_cell(0, 0).map(|c| c.raw.as_str()), Some(""));
+    }
+
+    #[test]
+    fn test_commit_edit_mode() {
+        let sheet = Spreadsheet::new(10, 10);
+        let mut app = App::new(sheet);
+
+        app.enter_edit_mode();
+        app.handle_edit_input(make_key_event(KeyCode::Char('4')));
+        app.handle_edit_input(make_key_event(KeyCode::Char('2')));
+
+        // Commit with Enter
+        app.handle_edit_input(make_key_event(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.sheet.get_cell(0, 0).map(|c| c.raw.as_str()), Some("42"));
     }
 }
