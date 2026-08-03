@@ -4,8 +4,16 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
+    /// Default navigation mode. hjkl / arrow keys move the cursor.
+    /// 'a'/F2 → Edit, 'i' → Insert (blank), '=' → Insert ('='), Enter → Insert (current value).
     Normal,
+    /// Focused navigation mode. Arrow keys move the cursor; hjkl do nothing.
+    /// Any printable character press enters Insert mode for the current cell.
+    /// ESC returns to Normal.
     Edit,
+    /// Cell editing mode. Shows the modal input overlay.
+    /// Enter commits the buffer; ESC discards and returns to Edit.
+    Insert,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -65,15 +73,39 @@ impl App {
             grid_config: GridConfig::default(),
             edit_buffer: String::new(),
             edit_cursor_idx: 0,
-            status_message: String::from("Press 'a' or F2 to edit | 's' to save | 'q' to quit"),
+            status_message: String::from(
+                "NORMAL -- 'a'/F2: edit mode | 'i': insert | '=': formula | 's': save | 'q': quit",
+            ),
             should_quit: false,
             last_click_time: None,
             last_clicked_cell: None,
         }
     }
 
-    pub fn enter_edit_mode(&mut self, initial_value: Option<String>) {
+    // -------------------------------------------------------------------------
+    // Mode transitions
+    // -------------------------------------------------------------------------
+
+    /// Switch from Normal → Edit mode. No cell buffer is prepared.
+    pub fn enter_edit_mode(&mut self) {
         self.mode = Mode::Edit;
+        self.status_message =
+            String::from("EDIT -- Arrows: navigate | Type to insert | Esc: back to normal");
+    }
+
+    /// Switch from Edit → Normal mode.
+    pub fn exit_edit_mode(&mut self) {
+        self.mode = Mode::Normal;
+        self.status_message = String::from(
+            "NORMAL -- 'a'/F2: edit mode | 'i': insert | '=': formula | 's': save | 'q': quit",
+        );
+    }
+
+    /// Switch to Insert mode, optionally with an initial buffer value.
+    /// - `None`  → loads the current cell's raw content for in-place editing.
+    /// - `Some(s)` → seeds the buffer with `s` (e.g. `"="` for formulas, `""` for blank insert).
+    pub fn enter_insert_mode(&mut self, initial_value: Option<String>) {
+        self.mode = Mode::Insert;
 
         self.edit_buffer = match initial_value {
             Some(val) => val,
@@ -85,21 +117,26 @@ impl App {
         };
 
         self.edit_cursor_idx = self.edit_buffer.chars().count();
-        self.status_message = String::from("EDIT MODE -- Press Enter to commit | Esc to cancel");
+        self.status_message = String::from("INSERT -- Enter: commit | Esc: discard");
     }
 
-    pub fn exit_edit_mode(&mut self, commit: bool) {
+    /// Commit or discard the current insert buffer, then return to Edit mode.
+    pub fn exit_insert_mode(&mut self, commit: bool) {
         if commit {
             self.sheet
                 .set_cell(self.cursor_row, self.cursor_col, self.edit_buffer.clone());
             self.status_message = String::from("Cell updated");
         } else {
-            self.status_message = String::from("Edit canceled");
+            self.status_message = String::from("Insert canceled");
         }
-        self.mode = Mode::Normal;
+        self.mode = Mode::Edit;
         self.edit_buffer.clear();
         self.edit_cursor_idx = 0;
     }
+
+    // -------------------------------------------------------------------------
+    // Cell operations
+    // -------------------------------------------------------------------------
 
     pub fn delete_cell(&mut self) {
         self.sheet
@@ -107,13 +144,14 @@ impl App {
         self.status_message = String::from("Cell deleted");
     }
 
-    pub fn handle_edit_input(&mut self, key: KeyEvent) {
+    /// Handle keystrokes while in Insert mode (the modal input overlay).
+    pub fn handle_insert_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter | KeyCode::F(2) => {
-                self.exit_edit_mode(true);
+                self.exit_insert_mode(true);
             }
             KeyCode::Esc => {
-                self.exit_edit_mode(false);
+                self.exit_insert_mode(false);
             }
             KeyCode::Left => {
                 if self.edit_cursor_idx > 0 {
@@ -249,8 +287,8 @@ impl App {
                 self.cursor_col = target_col;
 
                 if is_double_click {
-                    // Trigger edit mode on double-click
-                    self.enter_edit_mode(None);
+                    // Trigger insert mode on double-click
+                    self.enter_insert_mode(None);
                     // Reset click tracking so a 3rd fast click doesn't trigger another toggle
                     self.last_click_time = None;
                     self.last_clicked_cell = None;
@@ -315,37 +353,61 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_and_cancel_edit_mode() {
+    fn test_enter_and_cancel_insert_mode() {
         let sheet = Spreadsheet::new(10, 10);
         let mut app = App::new(sheet);
 
-        app.enter_edit_mode(None);
-        assert_eq!(app.mode, Mode::Edit);
+        // 'i' from Normal → Insert with blank buffer
+        app.enter_insert_mode(Some(String::new()));
+        assert_eq!(app.mode, Mode::Insert);
 
         // Type "123"
-        app.handle_edit_input(make_key_event(KeyCode::Char('1')));
-        app.handle_edit_input(make_key_event(KeyCode::Char('2')));
-        app.handle_edit_input(make_key_event(KeyCode::Char('3')));
+        app.handle_insert_input(make_key_event(KeyCode::Char('1')));
+        app.handle_insert_input(make_key_event(KeyCode::Char('2')));
+        app.handle_insert_input(make_key_event(KeyCode::Char('3')));
         assert_eq!(app.edit_buffer, "123");
 
-        // Cancel with Esc
-        app.handle_edit_input(make_key_event(KeyCode::Esc));
-        assert_eq!(app.mode, Mode::Normal);
+        // Cancel with Esc → back to Edit mode
+        app.handle_insert_input(make_key_event(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Edit);
         assert_eq!(app.sheet.get_cell(0, 0).map(|c| c.raw.as_str()), Some(""));
     }
 
     #[test]
-    fn test_commit_edit_mode() {
+    fn test_commit_insert_mode() {
         let sheet = Spreadsheet::new(10, 10);
         let mut app = App::new(sheet);
 
-        app.enter_edit_mode(None);
-        app.handle_edit_input(make_key_event(KeyCode::Char('4')));
-        app.handle_edit_input(make_key_event(KeyCode::Char('2')));
+        app.enter_insert_mode(Some(String::new()));
+        app.handle_insert_input(make_key_event(KeyCode::Char('4')));
+        app.handle_insert_input(make_key_event(KeyCode::Char('2')));
 
-        // Commit with Enter
-        app.handle_edit_input(make_key_event(KeyCode::Enter));
-        assert_eq!(app.mode, Mode::Normal);
+        // Commit with Enter → back to Edit mode
+        app.handle_insert_input(make_key_event(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::Edit);
         assert_eq!(app.sheet.get_cell(0, 0).map(|c| c.raw.as_str()), Some("42"));
+    }
+
+    #[test]
+    fn test_edit_mode_transition() {
+        let sheet = Spreadsheet::new(10, 10);
+        let mut app = App::new(sheet);
+
+        assert_eq!(app.mode, Mode::Normal);
+        app.enter_edit_mode();
+        assert_eq!(app.mode, Mode::Edit);
+        app.exit_edit_mode();
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn test_formula_shortcut_enters_insert_with_equals() {
+        let sheet = Spreadsheet::new(10, 10);
+        let mut app = App::new(sheet);
+
+        app.enter_insert_mode(Some("=".to_string()));
+        assert_eq!(app.mode, Mode::Insert);
+        assert_eq!(app.edit_buffer, "=");
+        assert_eq!(app.edit_cursor_idx, 1);
     }
 }

@@ -74,32 +74,32 @@ fn run_app(
             let grid = CsvGrid::new(app);
             f.render_widget(grid, size);
 
-            if app.mode == Mode::Edit {
-                ui::render_edit_modal(f, app);
+            if app.mode == Mode::Insert {
+                ui::render_insert_modal(f, app);
             }
         })?;
 
         // 2. Non-blocking event check
         if event::poll(Duration::from_micros(10))? {
             match event::read()? {
-                // Unified Mouse Event Handler
+                // ------------------------------------------------------------------
+                // Mouse Events
+                // ------------------------------------------------------------------
                 Event::Mouse(mouse_event) => {
                     match mouse_event.kind {
-                        // Left click selection / double-click edit
+                        // Left click selection / double-click insert
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if app.mode == Mode::Normal {
+                            if app.mode == Mode::Normal || app.mode == Mode::Edit {
                                 app.handle_mouse_left_click(mouse_event.column, mouse_event.row);
                             }
                         }
 
                         // Mouse wheel scroll UP / LEFT
                         MouseEventKind::ScrollUp => {
-                            if app.mode == Mode::Normal {
+                            if app.mode != Mode::Insert {
                                 if mouse_event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    // CONTROL + Wheel Up -> Scroll Left
                                     app.move_cursor(Direction::Horizontal(-1));
                                 } else {
-                                    // Standard Wheel Up -> Scroll Up
                                     app.move_cursor(Direction::Vertical(-1));
                                 }
                             }
@@ -107,12 +107,10 @@ fn run_app(
 
                         // Mouse wheel scroll DOWN / RIGHT
                         MouseEventKind::ScrollDown => {
-                            if app.mode == Mode::Normal {
+                            if app.mode != Mode::Insert {
                                 if mouse_event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    // CONTROL + Wheel Down -> Scroll Right
                                     app.move_cursor(Direction::Horizontal(1));
                                 } else {
-                                    // Standard Wheel Down -> Scroll Down
                                     app.move_cursor(Direction::Vertical(1));
                                 }
                             }
@@ -122,18 +120,52 @@ fn run_app(
                     }
                 }
 
-                // Unified Key Event Handler
-                Event::Key(key) => {
-                    if app.mode == Mode::Edit {
-                        app.handle_edit_input(key);
-                    } else {
+                // ------------------------------------------------------------------
+                // Key Events
+                // ------------------------------------------------------------------
+                Event::Key(key) => match app.mode {
+                    // ---- Insert mode: all input goes to the cell buffer ----------
+                    Mode::Insert => {
+                        app.handle_insert_input(key);
+                    }
+
+                    // ---- Edit mode: arrows navigate; any char opens Insert -------
+                    Mode::Edit => {
                         match (key.modifiers, key.code) {
-                            // Home Key Combinations
+                            // Exit Edit mode
+                            (_, KeyCode::Esc) => app.exit_edit_mode(),
+
+                            // Navigation (arrows only — hjkl intentionally excluded)
                             (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
                             (KeyModifiers::SHIFT, KeyCode::Home) => app.move_to_start_of_col(),
                             (_, KeyCode::Home) => app.move_to_start_line(),
 
-                            // General Actions
+                            (_, KeyCode::Up) => app.move_cursor(Direction::Vertical(-1)),
+                            (_, KeyCode::Down) | (_, KeyCode::Enter) => {
+                                app.move_cursor(Direction::Vertical(1))
+                            }
+                            (_, KeyCode::Left) => app.move_cursor(Direction::Horizontal(-1)),
+                            (_, KeyCode::Right) => app.move_cursor(Direction::Horizontal(1)),
+
+                            // Cell deletion still available in Edit mode
+                            (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
+
+                            // Any printable character → Insert mode seeded with that character
+                            (_, KeyCode::Char(c)) => app.enter_insert_mode(Some(c.to_string())),
+
+                            _ => {}
+                        }
+                    }
+
+                    // ---- Normal mode: full navigation + mode-entry shortcuts -----
+                    Mode::Normal => {
+                        match (key.modifiers, key.code) {
+                            // Home key combinations
+                            (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
+                            (KeyModifiers::SHIFT, KeyCode::Home) => app.move_to_start_of_col(),
+                            (_, KeyCode::Home) => app.move_to_start_line(),
+
+                            // Application actions
                             (_, KeyCode::Char('q')) | (_, KeyCode::Char('Q')) => {
                                 app.should_quit = true
                             }
@@ -142,25 +174,18 @@ fn run_app(
                             }
                             (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
 
-                            // Edit Mode Entry
-                            (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) | (_, KeyCode::Enter) => {
-                                app.enter_edit_mode(None)
-                            }
-                            (_, KeyCode::Char('=')) => app.enter_edit_mode(Some('='.to_string())),
-                            (_, KeyCode::Char('0'))
-                            | (_, KeyCode::Char('1'))
-                            | (_, KeyCode::Char('2'))
-                            | (_, KeyCode::Char('3'))
-                            | (_, KeyCode::Char('4'))
-                            | (_, KeyCode::Char('5'))
-                            | (_, KeyCode::Char('6'))
-                            | (_, KeyCode::Char('7'))
-                            | (_, KeyCode::Char('8'))
-                            | (_, KeyCode::Char('9')) => {
-                                app.enter_edit_mode(Some(key.code.to_string()))
-                            }
+                            // Enter Edit mode ('a' / F2)
+                            (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) => app.enter_edit_mode(),
 
-                            // Navigation
+                            // Enter Insert mode directly
+                            // 'i' → blank buffer (overwrite)
+                            (_, KeyCode::Char('i')) => app.enter_insert_mode(Some(String::new())),
+                            // '=' → seed buffer with '=' for formula entry
+                            (_, KeyCode::Char('=')) => app.enter_insert_mode(Some("=".to_string())),
+                            // Enter → load current cell value for editing
+                            (_, KeyCode::Enter) => app.enter_insert_mode(None),
+
+                            // Navigation (hjkl + arrows)
                             (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
                                 app.move_cursor(Direction::Vertical(-1));
                             }
@@ -177,7 +202,7 @@ fn run_app(
                             _ => {}
                         }
                     }
-                }
+                },
 
                 // Catch-all for Resize, FocusGained, FocusLost, Paste, etc.
                 _ => {}

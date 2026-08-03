@@ -22,13 +22,51 @@ cargo run
 cargo run path/to/file.csv
 ```
 
-### Keyboard Controls
+### Modal Editing — Three Modes
 
-- `h/j/k/l` or Arrow keys: Navigate cells
-- `a` or `F2` or `Enter`: Enter edit mode
-- `Esc` or `F2` or `Enter`: Commit changes and exit edit mode
-- `s`: Save spreadsheet
-- `q`: Quit application
+rSheet uses a three-mode editing model inspired by vi. The current mode is always visible in the status bar (bottom of the screen), which also changes colour for instant feedback.
+
+| Mode | Status bar colour | Description |
+|------|-------------------|-------------|
+| **NORMAL** | Dark grey | Default navigation mode |
+| **EDIT** | Magenta | Focused navigation, ready to insert |
+| **INSERT** | Green | Active cell editing (modal overlay) |
+
+#### Normal mode
+
+| Key | Action |
+|-----|--------|
+| `h` / `j` / `k` / `l` or Arrow keys | Navigate cells |
+| `a` or `F2` | Enter **Edit** mode |
+| `i` | Enter **Insert** mode on current cell (blank buffer) |
+| `=` | Enter **Insert** mode and seed buffer with `=` (formula) |
+| `Enter` | Enter **Insert** mode with current cell content |
+| `Delete` / `Backspace` | Clear current cell |
+| `s` | Save spreadsheet |
+| `q` | Quit |
+
+#### Edit mode
+
+Arrow keys navigate the grid; `hjkl` are **not** active here.
+
+| Key | Action |
+|-----|--------|
+| Arrow keys | Navigate cells |
+| `Enter` | Navigate down one row |
+| Any printable character | Enter **Insert** mode seeded with that character |
+| `Delete` / `Backspace` | Clear current cell |
+| `Esc` | Return to **Normal** mode |
+
+#### Insert mode
+
+A modal overlay shows the cell reference and the edit buffer.
+
+| Key | Action |
+|-----|--------|
+| Any character / `Backspace` / `Delete` | Edit the buffer |
+| `Left` / `Right` / `Home` / `End` | Move cursor within buffer |
+| `Enter` or `F2` | Commit buffer and return to **Edit** mode |
+| `Esc` | Discard buffer and return to **Edit** mode |
 
 ### Function Examples
 
@@ -81,7 +119,7 @@ The system relies on a **Directed Acyclic Graph (DAG)** to form a reactive compu
     Orchestrates the terminal lifecycle. It initializes crossterm for raw terminal output, processes command-line arguments to establish the target CSV file path, and executes the primary synchronous event loop at terminal frame rates.
 
   * src/app.rs (State & Interaction Layer):
-    Manages the interactive user session. It maintains the current mode (Normal vs. Edit), tracks cursor coordinates, and computes the auto-scrolling viewport boundaries to ensure the active cell remains visible during navigation.
+    Manages the interactive user session. It maintains the current mode (Normal, Edit, or Insert), tracks cursor coordinates, and computes the auto-scrolling viewport boundaries to ensure the active cell remains visible during navigation. The three-mode design separates pure navigation (Normal), focused navigation ready for input (Edit), and active cell editing via a modal overlay (Insert).
 
   * src/domain/sheet.rs (Core Domain & Graph Engine):
     Encapsulates grid management and data persistence. This module manages the 2D grid matrix, tracks adjacency lists for cellular dependencies, parses raw text into mathematical formulas, and executes topological evaluation algorithms.

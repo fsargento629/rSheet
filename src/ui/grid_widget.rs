@@ -48,6 +48,10 @@ impl<'a> Widget for CsvGrid<'a> {
         let cell_border_style = Style::default().fg(Color::DarkGray);
         let cell_text_style = Style::default().fg(Color::Reset);
 
+        // --- Per-mode cursor highlight styles ---
+        // Normal:  Blue  — default navigation
+        // Edit:    Magenta — focused navigation, ready to insert
+        // Insert:  Green  — active cell editing (modal is open)
         let normal_cursor_style = Style::default()
             .bg(Color::Blue)
             .fg(Color::White)
@@ -56,6 +60,11 @@ impl<'a> Widget for CsvGrid<'a> {
         let edit_cursor_style = Style::default()
             .bg(Color::Magenta)
             .fg(Color::White)
+            .add_modifier(Modifier::BOLD);
+
+        let insert_cursor_style = Style::default()
+            .bg(Color::Green)
+            .fg(Color::Black)
             .add_modifier(Modifier::BOLD);
 
         let (visible_rows, visible_cols) = self.visible_dimensions(area);
@@ -137,10 +146,10 @@ impl<'a> Widget for CsvGrid<'a> {
                 };
 
                 let current_cell_style = if is_active {
-                    if self.app.mode == Mode::Edit {
-                        edit_cursor_style
-                    } else {
-                        normal_cursor_style
+                    match self.app.mode {
+                        Mode::Normal => normal_cursor_style,
+                        Mode::Edit => edit_cursor_style,
+                        Mode::Insert => insert_cursor_style,
                     }
                 } else {
                     cell_text_style
@@ -182,12 +191,22 @@ impl<'a> Widget for CsvGrid<'a> {
             String::new()
         };
 
-        let mode_str = match self.app.mode {
-            Mode::Normal => " NORMAL ",
-            Mode::Edit => " EDIT ",
+        // Mode label and status bar colour vary per mode for instant visual feedback.
+        let (mode_str, status_style) = match self.app.mode {
+            Mode::Normal => (
+                " NORMAL ",
+                Style::default().bg(Color::DarkGray).fg(Color::White),
+            ),
+            Mode::Edit => (
+                " EDIT ",
+                Style::default().bg(Color::Magenta).fg(Color::White),
+            ),
+            Mode::Insert => (
+                " INSERT ",
+                Style::default().bg(Color::Green).fg(Color::Black),
+            ),
         };
 
-        let status_style = Style::default().bg(Color::DarkGray).fg(Color::White);
         let status_line = format!(
             "{:<width$}",
             format!(

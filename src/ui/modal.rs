@@ -29,8 +29,8 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Renders the edit modal overlay when the app is in edit mode.
-pub fn render_edit_modal(f: &mut Frame, app: &App) {
+/// Renders the insert modal overlay when the app is in Insert mode.
+pub fn render_insert_modal(f: &mut Frame, app: &App) {
     let area = f.area();
     let modal_area = centered_rect(60, 20, area);
 
