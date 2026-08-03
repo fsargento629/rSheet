@@ -50,7 +50,7 @@ impl<'a> Widget for CsvGrid<'a> {
 
         // --- Per-mode cursor highlight styles ---
         // Normal:  Blue  — default navigation
-        // Edit:    Magenta — focused navigation, ready to insert
+        // Visual:  Magenta — focused navigation, ready to insert
         // Insert:  Green  — active cell editing (modal is open)
         let normal_cursor_style = Style::default()
             .bg(Color::Blue)
@@ -148,7 +148,7 @@ impl<'a> Widget for CsvGrid<'a> {
                 let current_cell_style = if is_active {
                     match self.app.mode {
                         Mode::Normal => normal_cursor_style,
-                        Mode::Edit => edit_cursor_style,
+                        Mode::Visual => edit_cursor_style,
                         Mode::Insert => insert_cursor_style,
                     }
                 } else {
@@ -197,8 +197,8 @@ impl<'a> Widget for CsvGrid<'a> {
                 " NORMAL ",
                 Style::default().bg(Color::DarkGray).fg(Color::White),
             ),
-            Mode::Edit => (
-                " EDIT ",
+            Mode::Visual => (
+                " VISUAL ",
                 Style::default().bg(Color::Magenta).fg(Color::White),
             ),
             Mode::Insert => (

@@ -5,14 +5,14 @@ use std::time::Instant;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// Default navigation mode. hjkl / arrow keys move the cursor.
-    /// 'a'/F2 → Edit, 'i' → Insert (blank), '=' → Insert ('='), Enter → Insert (current value).
+    /// 'a'/F2 → Visual, 'i' → Insert (blank), '=' → Insert ('='), Enter → Insert (current value).
     Normal,
     /// Focused navigation mode. Arrow keys move the cursor; hjkl do nothing.
     /// Any printable character press enters Insert mode for the current cell.
     /// ESC returns to Normal.
-    Edit,
+    Visual,
     /// Cell editing mode. Shows the modal input overlay.
-    /// Enter commits the buffer; ESC discards and returns to Edit.
+    /// Enter commits the buffer; ESC discards and returns to Visual.
     Insert,
 }
 
@@ -74,7 +74,7 @@ impl App {
             edit_buffer: String::new(),
             edit_cursor_idx: 0,
             status_message: String::from(
-                "NORMAL -- 'a'/F2: edit mode | 'i': insert | '=': formula | 's': save | 'q': quit",
+                "NORMAL -- 'a'/F2: visual mode | 'i': insert | '=': formula | 's': save | 'q': quit",
             ),
             should_quit: false,
             last_click_time: None,
@@ -86,18 +86,18 @@ impl App {
     // Mode transitions
     // -------------------------------------------------------------------------
 
-    /// Switch from Normal → Edit mode. No cell buffer is prepared.
-    pub fn enter_edit_mode(&mut self) {
-        self.mode = Mode::Edit;
+    /// Switch from Normal → Visual mode. No cell buffer is prepared.
+    pub fn enter_visual_mode(&mut self) {
+        self.mode = Mode::Visual;
         self.status_message =
-            String::from("EDIT -- Arrows: navigate | Type to insert | Esc: back to normal");
+            String::from("VISUAL -- Arrows: navigate | Type to insert | Esc: back to normal");
     }
 
-    /// Switch from Edit → Normal mode.
-    pub fn exit_edit_mode(&mut self) {
+    /// Switch from Visual → Normal mode.
+    pub fn exit_visual_mode(&mut self) {
         self.mode = Mode::Normal;
         self.status_message = String::from(
-            "NORMAL -- 'a'/F2: edit mode | 'i': insert | '=': formula | 's': save | 'q': quit",
+            "NORMAL -- 'a'/F2: visual mode | 'i': insert | '=': formula | 's': save | 'q': quit",
         );
     }
 
@@ -120,7 +120,7 @@ impl App {
         self.status_message = String::from("INSERT -- Enter: commit | Esc: discard");
     }
 
-    /// Commit or discard the current insert buffer, then return to Edit mode.
+    /// Commit or discard the current insert buffer, then return to Visual mode.
     pub fn exit_insert_mode(&mut self, commit: bool) {
         if commit {
             self.sheet
@@ -129,7 +129,7 @@ impl App {
         } else {
             self.status_message = String::from("Insert canceled");
         }
-        self.mode = Mode::Edit;
+        self.mode = Mode::Visual;
         self.edit_buffer.clear();
         self.edit_cursor_idx = 0;
     }
@@ -367,9 +367,9 @@ mod tests {
         app.handle_insert_input(make_key_event(KeyCode::Char('3')));
         assert_eq!(app.edit_buffer, "123");
 
-        // Cancel with Esc → back to Edit mode
+        // Cancel with Esc → back to Visual mode
         app.handle_insert_input(make_key_event(KeyCode::Esc));
-        assert_eq!(app.mode, Mode::Edit);
+        assert_eq!(app.mode, Mode::Visual);
         assert_eq!(app.sheet.get_cell(0, 0).map(|c| c.raw.as_str()), Some(""));
     }
 
@@ -382,21 +382,21 @@ mod tests {
         app.handle_insert_input(make_key_event(KeyCode::Char('4')));
         app.handle_insert_input(make_key_event(KeyCode::Char('2')));
 
-        // Commit with Enter → back to Edit mode
+        // Commit with Enter → back to Visual mode
         app.handle_insert_input(make_key_event(KeyCode::Enter));
-        assert_eq!(app.mode, Mode::Edit);
+        assert_eq!(app.mode, Mode::Visual);
         assert_eq!(app.sheet.get_cell(0, 0).map(|c| c.raw.as_str()), Some("42"));
     }
 
     #[test]
-    fn test_edit_mode_transition() {
+    fn test_visual_mode_transition() {
         let sheet = Spreadsheet::new(10, 10);
         let mut app = App::new(sheet);
 
         assert_eq!(app.mode, Mode::Normal);
-        app.enter_edit_mode();
-        assert_eq!(app.mode, Mode::Edit);
-        app.exit_edit_mode();
+        app.enter_visual_mode();
+        assert_eq!(app.mode, Mode::Visual);
+        app.exit_visual_mode();
         assert_eq!(app.mode, Mode::Normal);
     }
 

@@ -29,7 +29,7 @@ rSheet uses a three-mode editing model inspired by vi. The current mode is alway
 | Mode | Status bar colour | Description |
 |------|-------------------|-------------|
 | **NORMAL** | Dark grey | Default navigation mode |
-| **EDIT** | Magenta | Focused navigation, ready to insert |
+| **VISUAL** | Magenta | Focused navigation, ready to insert |
 | **INSERT** | Green | Active cell editing (modal overlay) |
 
 #### Normal mode
@@ -37,7 +37,7 @@ rSheet uses a three-mode editing model inspired by vi. The current mode is alway
 | Key | Action |
 |-----|--------|
 | `h` / `j` / `k` / `l` or Arrow keys | Navigate cells |
-| `a` or `F2` | Enter **Edit** mode |
+| `a` or `F2` | Enter **Visual** mode |
 | `i` | Enter **Insert** mode on current cell (blank buffer) |
 | `=` | Enter **Insert** mode and seed buffer with `=` (formula) |
 | `Enter` | Enter **Insert** mode with current cell content |
@@ -45,7 +45,7 @@ rSheet uses a three-mode editing model inspired by vi. The current mode is alway
 | `s` | Save spreadsheet |
 | `q` | Quit |
 
-#### Edit mode
+#### Visual mode
 
 Arrow keys navigate the grid; `hjkl` are **not** active here.
 
@@ -65,8 +65,8 @@ A modal overlay shows the cell reference and the edit buffer.
 |-----|--------|
 | Any character / `Backspace` / `Delete` | Edit the buffer |
 | `Left` / `Right` / `Home` / `End` | Move cursor within buffer |
-| `Enter` or `F2` | Commit buffer and return to **Edit** mode |
-| `Esc` | Discard buffer and return to **Edit** mode |
+| `Enter` or `F2` | Commit buffer and return to **Visual** mode |
+| `Esc` | Discard buffer and return to **Visual** mode |
 
 ### Function Examples
 
@@ -119,7 +119,7 @@ The system relies on a **Directed Acyclic Graph (DAG)** to form a reactive compu
     Orchestrates the terminal lifecycle. It initializes crossterm for raw terminal output, processes command-line arguments to establish the target CSV file path, and executes the primary synchronous event loop at terminal frame rates.
 
   * src/app.rs (State & Interaction Layer):
-    Manages the interactive user session. It maintains the current mode (Normal, Edit, or Insert), tracks cursor coordinates, and computes the auto-scrolling viewport boundaries to ensure the active cell remains visible during navigation. The three-mode design separates pure navigation (Normal), focused navigation ready for input (Edit), and active cell editing via a modal overlay (Insert).
+    Manages the interactive user session. It maintains the current mode (Normal, Visual, or Insert), tracks cursor coordinates, and computes the auto-scrolling viewport boundaries to ensure the active cell remains visible during navigation. The three-mode design separates pure navigation (Normal), focused navigation ready for input (Visual), and active cell editing via a modal overlay (Insert).
 
   * src/domain/sheet.rs (Core Domain & Graph Engine):
     Encapsulates grid management and data persistence. This module manages the 2D grid matrix, tracks adjacency lists for cellular dependencies, parses raw text into mathematical formulas, and executes topological evaluation algorithms.

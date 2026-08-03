@@ -89,7 +89,7 @@ fn run_app(
                     match mouse_event.kind {
                         // Left click selection / double-click insert
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if app.mode == Mode::Normal || app.mode == Mode::Edit {
+                            if app.mode == Mode::Normal || app.mode == Mode::Visual {
                                 app.handle_mouse_left_click(mouse_event.column, mouse_event.row);
                             }
                         }
@@ -129,11 +129,11 @@ fn run_app(
                         app.handle_insert_input(key);
                     }
 
-                    // ---- Edit mode: arrows navigate; any char opens Insert -------
-                    Mode::Edit => {
+                    // ---- Visual mode: arrows navigate; any char opens Insert -------
+                    Mode::Visual => {
                         match (key.modifiers, key.code) {
-                            // Exit Edit mode
-                            (_, KeyCode::Esc) => app.exit_edit_mode(),
+                            // Exit Visual mode
+                            (_, KeyCode::Esc) => app.exit_visual_mode(),
 
                             // Navigation (arrows only — hjkl intentionally excluded)
                             (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
@@ -147,7 +147,7 @@ fn run_app(
                             (_, KeyCode::Left) => app.move_cursor(Direction::Horizontal(-1)),
                             (_, KeyCode::Right) => app.move_cursor(Direction::Horizontal(1)),
 
-                            // Cell deletion still available in Edit mode
+                            // Cell deletion still available in Visual mode
                             (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
 
                             // Any printable character → Insert mode seeded with that character
@@ -174,8 +174,8 @@ fn run_app(
                             }
                             (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
 
-                            // Enter Edit mode ('a' / F2)
-                            (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) => app.enter_edit_mode(),
+                            // Enter Visual mode ('a' / F2)
+                            (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) => app.enter_visual_mode(),
 
                             // Enter Insert mode directly
                             // 'i' → blank buffer (overwrite)
