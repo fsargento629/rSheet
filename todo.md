@@ -1,51 +1,44 @@
 # TODO
 
-## Now
-
-
-
 ## Next
 
+### Normal mode command fixes
 
-I want to add a new feature to my project. The README.md file has a good overview of the architecture of the project.
+#### general refactors
+  -  Arrows should be treated exactly like hjkl when in normal mode. for example d + right arrow should be like d+l
+  - ENTER should no longer go to edit and insert mode, it should be treated like a j (going down), so d + ENTER should be like d + j
+  - '=' should clear normal mode and start insert mode in the current cell, erasing the current cell and adding a '=' as the first character (like what happens when you press = when in visual mode)
 
-While in normal mode, I want to add more functionality:
+#### Better delete 
+  - Delete should not remove a line, it should just make it empty. The line numbers should not change after a delete. 
+  - Alternate delete with gd for vertical removals (keep d for horizontal removals). gor example gd1j removes one cell below  (vertically), while d1j removes an entire line below
 
-    - vim like jumps: 2j to jump 2 lines down, 2k to jump 2 lines up, 5l to jump 5 lines left, 5h to jump 5 lines right, if the jump goes out of bounds, it should saturate at the edge of the sheet
-    -  d to delete the cell
-    - dd to delete the line
-    - dc to delete the column
-
-  How do we detect the double d? and the dc? It is not trivial, but the idea is for the final product to be like neovim
-
-  Each of these new shortcuts should have a function that they trigger (the vim like jumps can use the same idea as in run_app like app.move_cursor(Direction::Horizontal(-1)))
-----
-
-New feature: command line mode. Similar to vim. When the user is in normal mode and presses ESC, the program should switch to command line mode
-
-- The 
-  
+#### better paste
+    - Paste should have an alternate version, denominated by 'g'. Several commands will be in the future given an alternate version, and the g before a command is the idiomatic way of saying this for them
+                  Key | Behaviour |
+                |-----|-----------|
+                | `p` | Insert after cursor (current behaviour) |
+                | `P` | Insert before cursor (current behaviour) |
+                | `gp` | Overwrite paste starting at cursor+1 (cells) / cursor row+1 (rows) |
+                | `gP` | Overwrite paste starting at cursor (cells) / cursor row (rows)
+  - Additionally, "yy" followed by paste should paste a line, but shifted depending on the horizontal value of the cursor. It should behave like 'yNl', where N is the amount of cells in the line
+      - This is to fix the behaviour where you yank a line and when you paste it below and a few cells to the side, it is pasted on the same line as the cursor, but not starting at its column
 
 
-This feature is special mode. It is described below.
 
-- Special mode, similar to vim's special mode. It should triggered only in normal mode, by pressing ESC. It can be left by pressing ESC again.
-  - All special mode commands work by typing a letter, then pressing enter, when in special mode
-    - vim like jumps: 2j to jump 2 lines down, 2k to jump 2 lines up, 5l to jump 5 lines left, 5h to jump 5 lines right, if the jump goes out of bounds, it should saturate at the edge of the sheet
-    - cell jumping in special mode: for example, A2 then enter to go to cell A2
-    - d to delete the cell
-    - dd to delete the line
-    - dc to delete the column
-    - More commands to come, we should just do the easy ones first
-- When entering special mode, the status message at the bottom of the screen should show the buffer that the user writes
-  (for example, ESC followed by ": dd") should make it so the status message shows : dd. The theme 
+### visual/insert mode fixes
+- i for insert mode should keep the same buffer as was before. right now it erases the cell contents when entering a cell with i for insert mode
+- F2 should enter insert mode on the current cell in normal and visual mode, like pressing i on normal mode
 
-- END to go to last edited cell in line
-- SHIFT + END to go to last cell edited in col.
 
 ## Future
 
+- new yank kind: Y for relative yank
+- new delete operator: D for line removal with updates to all the cells affected by this removal (if cell X1 depends on a cell on line R, and line R is removed, then cell X1 needs its formula updated(shortened))
+- Operator to add a new empty line below, using a similar DAG and formula update logic as the operator D
+- Visual mode shift selection
 - F3 to toggle values being shown or fomulas
+
 - Cosmetic improvements : header with file name, and program name 
 - merge cells feature. this would force us to include some GUI comands in the csv so that the view changes
 
@@ -55,22 +48,3 @@ This feature is special mode. It is described below.
 - graphs on a different tab.
 - bar charts
 - Split terminal into multiple panes, so that tabs can be shown side by side, moved around
-
-
-## Completed
-
-✓ **Function Support** (Completed)
-  - Added function parsing and evaluation to the expression engine
-  - Implemented functions: POW, SUM, AVG, MAX, MIN
-  - Functions integrate seamlessly with the DAG dependency tracker
-  - Cell references in function arguments are automatically tracked as dependencies
-  - Supports nested function calls and mixing functions with arithmetic
-  - Circular dependency detection works through function calls
-  - See FUNCTIONS.md for complete documentation
-
-✓ **Centered Cell Edit Modal** (Completed)
-  - Implemented floating edit modal dialog centered on the screen (`src/ui/modal.rs`)
-  - Modal clears background grid, displays cell reference header (e.g. `Edit Cell [A1]`), input buffer, and control footer
-  - Updated grid rendering so background spreadsheet stays intact with target cell highlighted
-  - Updated key binding logic: `Enter`/`F2` commits changes, `Esc` cancels editing
-  - Supports full multi-line wrapping and exact terminal cursor placement

@@ -13,6 +13,7 @@ use std::time::Duration;
 
 mod app;
 mod domain;
+mod normal_mode;
 mod ui;
 
 use app::{App, Direction, Mode};
@@ -157,46 +158,68 @@ fn run_app(
                         }
                     }
 
-                    // ---- Normal mode: full navigation + mode-entry shortcuts -----
+                    // ---- Normal mode: VIM-style command state machine --------
                     Mode::Normal => {
                         match (key.modifiers, key.code) {
-                            // Home key combinations
-                            (KeyModifiers::CONTROL, KeyCode::Home) => app.move_to_start(),
-                            (KeyModifiers::SHIFT, KeyCode::Home) => app.move_to_start_of_col(),
-                            (_, KeyCode::Home) => app.move_to_start_line(),
+                            // Non-char keys that bypass the state machine
+                            // (reset any pending count/operator first).
 
-                            // Application actions
-                            (_, KeyCode::Char('q')) | (_, KeyCode::Char('Q')) => {
-                                app.should_quit = true
-                            }
-                            (_, KeyCode::Char('s')) | (_, KeyCode::Char('S')) => {
-                                app.save_spreadsheet()
-                            }
-                            (_, KeyCode::Delete) | (_, KeyCode::Backspace) => app.delete_cell(),
+                            // Cancel / reset pending command
+                            (_, KeyCode::Esc) => app.reset_normal_cmd(),
 
-                            // Enter Visual mode ('a' / F2)
-                            (_, KeyCode::Char('a')) | (_, KeyCode::F(2)) => app.enter_visual_mode(),
-
-                            // Enter Insert mode directly
-                            // 'i' → blank buffer (overwrite)
-                            (_, KeyCode::Char('i')) => app.enter_insert_mode(Some(String::new())),
-                            // '=' → seed buffer with '=' for formula entry
-                            (_, KeyCode::Char('=')) => app.enter_insert_mode(Some("=".to_string())),
-                            // Enter → load current cell value for editing
-                            (_, KeyCode::Enter) => app.enter_insert_mode(None),
-
-                            // Navigation (hjkl + arrows)
-                            (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                            // Arrow-key navigation (resets state machine)
+                            (_, KeyCode::Up) => {
+                                app.reset_normal_cmd();
                                 app.move_cursor(Direction::Vertical(-1));
                             }
-                            (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                            (_, KeyCode::Down) => {
+                                app.reset_normal_cmd();
                                 app.move_cursor(Direction::Vertical(1));
                             }
-                            (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
+                            (_, KeyCode::Left) => {
+                                app.reset_normal_cmd();
                                 app.move_cursor(Direction::Horizontal(-1));
                             }
-                            (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
+                            (_, KeyCode::Right) => {
+                                app.reset_normal_cmd();
                                 app.move_cursor(Direction::Horizontal(1));
+                            }
+
+                            // Home key family
+                            (KeyModifiers::CONTROL, KeyCode::Home) => {
+                                app.reset_normal_cmd();
+                                app.move_to_start();
+                            }
+                            (KeyModifiers::SHIFT, KeyCode::Home) => {
+                                app.reset_normal_cmd();
+                                app.move_to_start_of_col();
+                            }
+                            (_, KeyCode::Home) => {
+                                app.reset_normal_cmd();
+                                app.move_to_start_line();
+                            }
+
+                            // F2 → Visual mode
+                            (_, KeyCode::F(2)) => {
+                                app.reset_normal_cmd();
+                                app.enter_visual_mode();
+                            }
+
+                            // Delete / Backspace → clear current cell
+                            (_, KeyCode::Delete) | (_, KeyCode::Backspace) => {
+                                app.reset_normal_cmd();
+                                app.delete_cell();
+                            }
+
+                            // Enter → Insert mode with current cell content
+                            (_, KeyCode::Enter) => {
+                                app.reset_normal_cmd();
+                                app.enter_insert_mode(None);
+                            }
+
+                            // All printable characters → VIM state machine
+                            (_, KeyCode::Char(c)) => {
+                                app.handle_normal_char(c);
                             }
 
                             _ => {}

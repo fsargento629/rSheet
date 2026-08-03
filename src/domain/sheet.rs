@@ -735,6 +735,119 @@ impl Spreadsheet {
         Ok(col - 1)
     }
 
+    // -------------------------------------------------------------------------
+    // Structural operations (delete / insert rows or cells in a row)
+    // -------------------------------------------------------------------------
+
+    /// Remove cells in the column range `[col_start ..= col_end]` from `row`,
+    /// shifting the remaining cells left and padding the right with empty cells.
+    ///
+    /// The dependency graph is fully rebuilt afterwards.
+    pub fn delete_cells_in_row(&mut self, row: usize, col_start: usize, col_end: usize) {
+        if row >= self.max_rows || col_start >= self.max_cols {
+            return;
+        }
+        let col_end = col_end.min(self.max_cols - 1);
+        if col_start > col_end {
+            return;
+        }
+        let count = col_end - col_start + 1;
+        for _ in 0..count {
+            if col_start < self.data[row].len() {
+                self.data[row].remove(col_start);
+            }
+        }
+        while self.data[row].len() < self.max_cols {
+            self.data[row].push(Cell::new(String::new()));
+        }
+        // Clear stale dependency entries and rebuild from scratch.
+        self.dependencies.clear();
+        self.dependents.clear();
+        self.rebuild_graph_and_evaluate_all();
+    }
+
+    /// Remove rows in the range `[row_start ..= row_end]`, shifting later rows
+    /// up and appending empty rows at the bottom to keep `max_rows` constant.
+    ///
+    /// The dependency graph is fully rebuilt afterwards.
+    pub fn delete_rows(&mut self, row_start: usize, row_end: usize) {
+        if row_start >= self.max_rows {
+            return;
+        }
+        let row_end = row_end.min(self.max_rows - 1);
+        let count = row_end - row_start + 1;
+        for _ in 0..count {
+            if row_start < self.data.len() {
+                self.data.remove(row_start);
+            }
+        }
+        while self.data.len() < self.max_rows {
+            self.data
+                .push(vec![Cell::new(String::new()); self.max_cols]);
+        }
+        self.dependencies.clear();
+        self.dependents.clear();
+        self.rebuild_graph_and_evaluate_all();
+    }
+
+    /// Insert `cells` (raw strings) into `row` at column `col`, shifting
+    /// existing cells to the right.  Any cells pushed past `max_cols` are
+    /// dropped.  The row is re-padded to `max_cols` if needed.
+    ///
+    /// The dependency graph is fully rebuilt afterwards.
+    pub fn insert_cells_in_row(&mut self, row: usize, col: usize, cells: &[String]) {
+        if row >= self.max_rows || cells.is_empty() {
+            return;
+        }
+        let col = col.min(self.max_cols);
+        for (i, raw) in cells.iter().enumerate() {
+            let insert_at = col + i;
+            if insert_at < self.max_cols {
+                self.data[row].insert(insert_at, Cell::new(raw.clone()));
+            }
+        }
+        // Trim to max_cols (cells pushed beyond the right edge are dropped).
+        self.data[row].truncate(self.max_cols);
+        // Re-pad if somehow shorter (shouldn't happen, but be safe).
+        while self.data[row].len() < self.max_cols {
+            self.data[row].push(Cell::new(String::new()));
+        }
+        self.dependencies.clear();
+        self.dependents.clear();
+        self.rebuild_graph_and_evaluate_all();
+    }
+
+    /// Insert `rows_data` (each a `Vec<String>` of raw cell values) starting
+    /// at row index `row`, shifting existing rows downward.  Rows pushed past
+    /// `max_rows` are dropped.
+    ///
+    /// The dependency graph is fully rebuilt afterwards.
+    pub fn insert_rows(&mut self, row: usize, rows_data: &[Vec<String>]) {
+        if rows_data.is_empty() || row > self.max_rows {
+            return;
+        }
+        for (i, row_vals) in rows_data.iter().enumerate() {
+            let insert_at = row + i;
+            if insert_at >= self.max_rows {
+                break;
+            }
+            let new_row: Vec<Cell> = (0..self.max_cols)
+                .map(|c| Cell::new(row_vals.get(c).cloned().unwrap_or_default()))
+                .collect();
+            self.data.insert(insert_at, new_row);
+        }
+        // Trim to max_rows.
+        self.data.truncate(self.max_rows);
+        // Re-pad if somehow shorter.
+        while self.data.len() < self.max_rows {
+            self.data
+                .push(vec![Cell::new(String::new()); self.max_cols]);
+        }
+        self.dependencies.clear();
+        self.dependents.clear();
+        self.rebuild_graph_and_evaluate_all();
+    }
+
     pub fn save_to_csv<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn Error>> {
         let file = File::create(path)?;
         let mut wtr = csv::WriterBuilder::new()

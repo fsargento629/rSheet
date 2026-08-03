@@ -1,4 +1,5 @@
 use crate::domain::Spreadsheet;
+use crate::normal_mode::{ClipboardContent, Motion, NormalCommand, NormalModeState};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Instant;
 
@@ -55,6 +56,10 @@ pub struct App {
 
     pub status_message: String,
     pub should_quit: bool,
+    /// Normal-mode command state machine (tracks pending counts/operators).
+    pub normal_cmd: NormalModeState,
+    /// Clipboard for yank/paste operations.
+    pub clipboard: Option<ClipboardContent>,
 
     // For tracking mouse click events and cell selection
     pub last_click_time: Option<Instant>,
@@ -77,6 +82,8 @@ impl App {
                 "NORMAL -- 'a'/F2: visual mode | 'i': insert | '=': formula | 's': save | 'q': quit",
             ),
             should_quit: false,
+            normal_cmd: NormalModeState::new(),
+            clipboard: None,
             last_click_time: None,
             last_clicked_cell: None,
         }
@@ -249,6 +256,330 @@ impl App {
     pub fn move_to_start_of_col(&mut self) {
         self.cursor_row = 0;
         self.scroll_row = 0;
+    }
+
+    /// Move the cursor to the last column.
+    pub fn move_to_end_of_row(&mut self) {
+        self.cursor_col = self.sheet.max_cols - 1;
+        self.adjust_viewport();
+    }
+
+    // -------------------------------------------------------------------------
+    // Normal-mode command handling
+    // -------------------------------------------------------------------------
+
+    /// Reset the normal-mode state machine and refresh the status bar.
+    pub fn reset_normal_cmd(&mut self) {
+        self.normal_cmd.reset();
+        self.update_normal_status();
+    }
+
+    /// Update the status message to reflect the current normal-mode state.
+    pub fn update_normal_status(&mut self) {
+        let pending = self.normal_cmd.pending_keys();
+        if pending.is_empty() {
+            self.status_message = String::from(
+                "NORMAL -- hjkl/arrows: nav | d: delete | y: yank | p: paste | 'a': visual | 'q': quit",
+            );
+        } else {
+            self.status_message = format!(
+                "NORMAL [{}] -- Esc: cancel | d/y + motion | dd/yy: row | p/P: paste",
+                pending
+            );
+        }
+    }
+
+    /// Feed one character key to the normal-mode state machine and execute any
+    /// resulting command.
+    pub fn handle_normal_char(&mut self, ch: char) {
+        if let Some(cmd) = self.normal_cmd.process_char(ch) {
+            self.execute_normal_command(cmd);
+        } else {
+            self.update_normal_status();
+        }
+    }
+
+    /// Execute a fully-resolved [`NormalCommand`].
+    pub fn execute_normal_command(&mut self, cmd: NormalCommand) {
+        match cmd {
+            NormalCommand::Move { motion, count } => {
+                self.execute_motion(motion, count);
+            }
+            NormalCommand::Delete { motion, count } => {
+                self.execute_delete(motion, count);
+            }
+            NormalCommand::DeleteRow { count } => {
+                let row_end = (self.cursor_row + count - 1).min(self.sheet.max_rows - 1);
+                // Yank before delete so dd implicitly fills the clipboard.
+                let rows = self.collect_rows(self.cursor_row, row_end);
+                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.sheet.delete_rows(self.cursor_row, row_end);
+                self.cursor_row = self.cursor_row.min(self.sheet.max_rows - 1);
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} row(s)", count);
+            }
+            NormalCommand::Yank { motion, count } => {
+                self.execute_yank(motion, count);
+            }
+            NormalCommand::YankRow { count } => {
+                let row_end = (self.cursor_row + count - 1).min(self.sheet.max_rows - 1);
+                let rows = self.collect_rows(self.cursor_row, row_end);
+                let n = rows.len();
+                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.status_message = format!("Yanked {} row(s)", n);
+            }
+            NormalCommand::Paste { before, count } => {
+                self.execute_paste(before, count);
+            }
+            NormalCommand::EnterVisualMode => self.enter_visual_mode(),
+            NormalCommand::EnterInsertMode(s) => self.enter_insert_mode(s),
+            NormalCommand::Save => self.save_spreadsheet(),
+            NormalCommand::Quit => self.should_quit = true,
+            NormalCommand::DeleteCell => self.delete_cell(),
+            NormalCommand::Reset => {}
+        }
+        self.update_normal_status();
+    }
+
+    // -------------------------------------------------------------------------
+    // Motion execution
+    // -------------------------------------------------------------------------
+
+    fn execute_motion(&mut self, motion: Motion, count: usize) {
+        match motion {
+            Motion::Left => self.move_cursor(Direction::Horizontal(-(count as isize))),
+            Motion::Right => self.move_cursor(Direction::Horizontal(count as isize)),
+            Motion::Up => self.move_cursor(Direction::Vertical(-(count as isize))),
+            Motion::Down => self.move_cursor(Direction::Vertical(count as isize)),
+            Motion::StartOfRow => self.move_to_start_line(),
+            Motion::EndOfRow => self.move_to_end_of_row(),
+            Motion::WordForward => self.move_cursor(Direction::Horizontal(count as isize)),
+            Motion::WordBack => self.move_cursor(Direction::Horizontal(-(count as isize))),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Delete execution
+    // -------------------------------------------------------------------------
+
+    fn execute_delete(&mut self, motion: Motion, count: usize) {
+        let row = self.cursor_row;
+        let col = self.cursor_col;
+        let max_col = self.sheet.max_cols - 1;
+        let max_row = self.sheet.max_rows - 1;
+
+        match motion {
+            // Delete `count` cells to the LEFT of cursor (not including cursor).
+            Motion::Left | Motion::WordBack => {
+                if col == 0 {
+                    return;
+                }
+                let col_end = col - 1;
+                let col_start = col.saturating_sub(count);
+                // Yank deleted range into clipboard.
+                let cells = self.collect_cells_in_row(row, col_start, col_end);
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.sheet.delete_cells_in_row(row, col_start, col_end);
+                // Cursor stays at same index; content under it shifts.
+                self.cursor_col = col_start.min(self.sheet.max_cols - 1);
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} cell(s) left", col_end - col_start + 1);
+            }
+            // Delete `count` cells to the RIGHT of cursor (not including cursor).
+            Motion::Right | Motion::WordForward => {
+                if col >= max_col {
+                    return;
+                }
+                let col_start = col + 1;
+                let col_end = (col + count).min(max_col);
+                let cells = self.collect_cells_in_row(row, col_start, col_end);
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.sheet.delete_cells_in_row(row, col_start, col_end);
+                // Cursor stays at col (same position, same content).
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} cell(s) right", col_end - col_start + 1);
+            }
+            // Delete rows from cursor down to cursor+count (inclusive).
+            Motion::Down => {
+                let row_end = (row + count).min(max_row);
+                let rows = self.collect_rows(row, row_end);
+                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.sheet.delete_rows(row, row_end);
+                self.cursor_row = row.min(self.sheet.max_rows - 1);
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} row(s)", row_end - row + 1);
+            }
+            // Delete rows from cursor-count up to cursor (inclusive).
+            Motion::Up => {
+                let row_start = row.saturating_sub(count);
+                let rows = self.collect_rows(row_start, row);
+                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.sheet.delete_rows(row_start, row);
+                self.cursor_row = row_start.min(self.sheet.max_rows - 1);
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} row(s)", row - row_start + 1);
+            }
+            // Delete from cursor to end of row (cursor included).
+            Motion::EndOfRow => {
+                let cells = self.collect_cells_in_row(row, col, max_col);
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.sheet.delete_cells_in_row(row, col, max_col);
+                self.adjust_viewport();
+                self.status_message = String::from("Deleted to end of row");
+            }
+            // Delete from start of row to cursor-1 (cursor NOT included).
+            Motion::StartOfRow => {
+                if col == 0 {
+                    return;
+                }
+                let cells = self.collect_cells_in_row(row, 0, col - 1);
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.sheet.delete_cells_in_row(row, 0, col - 1);
+                self.cursor_col = 0;
+                self.adjust_viewport();
+                self.status_message = String::from("Deleted to start of row");
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Yank execution
+    // -------------------------------------------------------------------------
+
+    fn execute_yank(&mut self, motion: Motion, count: usize) {
+        let row = self.cursor_row;
+        let col = self.cursor_col;
+        let max_col = self.sheet.max_cols - 1;
+        let max_row = self.sheet.max_rows - 1;
+
+        match motion {
+            Motion::Left | Motion::WordBack => {
+                if col == 0 {
+                    return;
+                }
+                let col_end = col - 1;
+                let col_start = col.saturating_sub(count);
+                let cells = self.collect_cells_in_row(row, col_start, col_end);
+                let n = cells.len();
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.status_message = format!("Yanked {} cell(s)", n);
+            }
+            Motion::Right | Motion::WordForward => {
+                if col >= max_col {
+                    return;
+                }
+                let col_start = col + 1;
+                let col_end = (col + count).min(max_col);
+                let cells = self.collect_cells_in_row(row, col_start, col_end);
+                let n = cells.len();
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.status_message = format!("Yanked {} cell(s)", n);
+            }
+            Motion::Down => {
+                let row_end = (row + count).min(max_row);
+                let rows = self.collect_rows(row, row_end);
+                let n = rows.len();
+                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.status_message = format!("Yanked {} row(s)", n);
+            }
+            Motion::Up => {
+                let row_start = row.saturating_sub(count);
+                let rows = self.collect_rows(row_start, row);
+                let n = rows.len();
+                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.status_message = format!("Yanked {} row(s)", n);
+            }
+            Motion::EndOfRow => {
+                let cells = self.collect_cells_in_row(row, col, max_col);
+                let n = cells.len();
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.status_message = format!("Yanked {} cell(s) to end of row", n);
+            }
+            Motion::StartOfRow => {
+                if col == 0 {
+                    return;
+                }
+                let cells = self.collect_cells_in_row(row, 0, col - 1);
+                let n = cells.len();
+                self.clipboard = Some(ClipboardContent::Cells(cells));
+                self.status_message = format!("Yanked {} cell(s) to start of row", n);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Paste execution
+    // -------------------------------------------------------------------------
+
+    fn execute_paste(&mut self, before: bool, count: usize) {
+        let clipboard = match self.clipboard.clone() {
+            Some(c) => c,
+            None => {
+                self.status_message = String::from("Nothing to paste");
+                return;
+            }
+        };
+
+        match clipboard {
+            ClipboardContent::Cells(cells) => {
+                // Build the repeated payload.
+                let payload: Vec<String> = cells
+                    .iter()
+                    .cloned()
+                    .cycle()
+                    .take(cells.len() * count)
+                    .collect();
+                let col = if before {
+                    self.cursor_col
+                } else {
+                    self.cursor_col + 1
+                };
+                self.sheet
+                    .insert_cells_in_row(self.cursor_row, col, &payload);
+                self.adjust_viewport();
+                self.status_message = format!("Pasted {} cell(s)", payload.len());
+            }
+            ClipboardContent::Rows(rows) => {
+                let row = if before {
+                    self.cursor_row
+                } else {
+                    self.cursor_row + 1
+                };
+                // Repeat `count` times.
+                let payload: Vec<Vec<String>> = rows
+                    .iter()
+                    .cloned()
+                    .cycle()
+                    .take(rows.len() * count)
+                    .collect();
+                let n = payload.len();
+                self.sheet.insert_rows(row, &payload);
+                self.adjust_viewport();
+                self.status_message = format!("Pasted {} row(s)", n);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Clipboard collection helpers
+    // -------------------------------------------------------------------------
+
+    /// Collect raw cell values for columns `[col_start ..= col_end]` of `row`.
+    fn collect_cells_in_row(&self, row: usize, col_start: usize, col_end: usize) -> Vec<String> {
+        (col_start..=col_end)
+            .filter_map(|c| self.sheet.get_cell(row, c).map(|cell| cell.raw.clone()))
+            .collect()
+    }
+
+    /// Collect full rows (as `Vec<String>` of raw values) for `[row_start ..= row_end]`.
+    fn collect_rows(&self, row_start: usize, row_end: usize) -> Vec<Vec<String>> {
+        (row_start..=row_end)
+            .map(|r| {
+                (0..self.sheet.max_cols)
+                    .filter_map(|c| self.sheet.get_cell(r, c).map(|cell| cell.raw.clone()))
+                    .collect()
+            })
+            .collect()
     }
 
     pub fn handle_mouse_left_click(&mut self, mouse_x: u16, mouse_y: u16) {
