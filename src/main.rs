@@ -173,6 +173,9 @@ fn run_app(
                             (_, KeyCode::Left) => app.handle_normal_char('h'),
                             (_, KeyCode::Right) => app.handle_normal_char('l'),
 
+                            // Enter → just like 'j' (down) in normal mode
+                            (_, KeyCode::Enter) => app.handle_normal_char('j'),
+
                             // Home key family
                             (KeyModifiers::CONTROL, KeyCode::Home) => {
                                 app.reset_normal_cmd();
@@ -197,12 +200,6 @@ fn run_app(
                             (_, KeyCode::Delete) | (_, KeyCode::Backspace) => {
                                 app.reset_normal_cmd();
                                 app.delete_cell();
-                            }
-
-                            // Enter → Insert mode with current cell content
-                            (_, KeyCode::Enter) => {
-                                app.reset_normal_cmd();
-                                app.enter_insert_mode(None);
                             }
 
                             // All printable characters → VIM state machine
