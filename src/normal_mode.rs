@@ -324,7 +324,7 @@ impl NormalModeState {
             }
             'i' => {
                 self.reset();
-                Some(NormalCommand::EnterInsertMode(Some(String::new())))
+                Some(NormalCommand::EnterInsertMode(None))
             }
             '=' => {
                 self.reset();

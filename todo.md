@@ -10,7 +10,6 @@
 
 
 ### visual/insert mode fixes
-- i for insert mode should keep the same buffer as was before. right now it erases the cell contents when entering a cell with i for insert mode
 - F2 should enter insert mode on the current cell in normal and visual mode, like pressing i on normal mode
 
 
