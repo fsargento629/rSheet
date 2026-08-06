@@ -98,20 +98,22 @@ Mirror of `d` operating on the column axis. Counts are supported (e.g. `3gdh`, `
 |--------------|--------|
 | `yh` | Yank cells to the left of the cursor |
 | `yl` | Yank cells to the right of the cursor |
-| `yj` | Yank rows downward |
-| `yk` | Yank rows upward |
+| `yj` | Yank current cell + N cells below in the same column (vertical strip) |
+| `yk` | Yank current cell + N cells above in the same column (vertical strip) |
 | `y$` | Yank from cursor to end of row |
 | `y0` | Yank from start of row to cursor |
 | `yy` | Yank entire current row (remembers cursor column for offset paste); `Nyy` yanks N rows |
 
 ##### Paste
 
-| Key | Action |
-|-----|--------|
-| `p` | Insert after cursor / below current row — shifts existing content |
-| `P` | Insert before cursor / above current row — shifts existing content |
-| `gp` | Overwrite starting at cursor+1 (cells) or row+1 (rows) — no shifting; row paste uses yank column offset |
-| `gP` | Overwrite starting at cursor / current row — no shifting; row paste uses yank column offset |
+| Key | Cells / Rows clipboard | Column clipboard |
+|-----|------------------------|------------------|
+| `p` | Insert after cursor / below current row — shifts existing content | Overwrite current column downward from cursor+1 |
+| `P` | Insert before cursor / above current row — shifts existing content | Overwrite current column downward from cursor |
+| `gp` | Overwrite starting at cursor+1 (cells) or row+1 (rows) — no shifting; row paste uses yank column offset | Identical to `p` for column clips |
+| `gP` | Overwrite starting at cursor / current row — no shifting; row paste uses yank column offset | Identical to `P` for column clips |
+
+> **Column clipboard** is produced by `yj`, `yk`, `gdj`, `gdk`, `gd$`, and `gd0`. For column clips, `gp`/`gP` behave identically to `p`/`P` respectively.
 
 ##### State machine grammar
 

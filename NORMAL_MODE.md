@@ -1223,6 +1223,12 @@ The key insight: **`d` + horizontal motion = cell scope; `d` + vertical motion =
 
 Yank copies content to the clipboard **without clearing** it. The motion grammar is identical to `d`: `[count1] y [count2] motion`. Content remains in the grid unchanged.
 
+| Command | Clipboard type | Shape |
+|---------|---------------|-------|
+| `yh`, `yl`, `y0`, `y$` | `Cells` | Horizontal strip |
+| `yj`, `yk` | `Column` | Vertical strip |
+| `yy`, `Nyy` | `Rows` | Full-row 2D grid |
+
 ---
 
 ### 7.1 `yh` / `yl` — Yank Cells Left / Right
@@ -1257,46 +1263,53 @@ Copies D2 and E2 to clipboard. Grid unchanged.
 
 ---
 
-### 7.2 `yj` / `yk` — Yank Rows
+### 7.2 `yj` — Yank Cells Downward in Current Column
 
-Copies entire rows to the clipboard. The clipboard type is set to **row**.
-
----
-
-**`yj` — yank current row and 1 below (cursor at row 2)**
-
-Copies rows 2 and 3 to clipboard. Grid unchanged.
+Yanks `count` cells starting at the cursor in the current column (cursor cell + count−1 cells below). Produces a **`Column`** clipboard.
 
 ```
+Before:
      A     B     C     D     E
 1   10    20    30    40    50
-2   11    21   [31]   41    51   ← row 2 copied
-3   12    22    32    42    52   ← row 3 copied
+2   11    21   [31]   41    51
+3   12    22    32    42    52
 4   13    23    33    43    53
+5   14    24    34    44    54
+
+yj  (count=1) → clipboard Column: ["31"]              (cursor cell only)
+y2j (count=2) → clipboard Column: ["31", "32"]        (cursor + 1 below)
+y3j (count=3) → clipboard Column: ["31", "32", "33"]  (cursor + 2 below)
 ```
 
 ---
 
-**`2yk` — yank 2 rows above + current (cursor at row 4)**
+### 7.3 `yk` — Yank Cells Upward in Current Column
 
-Copies rows 2, 3, and 4 to clipboard. Grid unchanged.
+Yanks `count` cells ending at the cursor in the current column (count−1 cells above + cursor cell). Produces a **`Column`** clipboard.
 
 ```
+Before (cursor at C4):
      A     B     C     D     E
 1   10    20    30    40    50
-2   11    21    31    41    51   ← row 2 copied
-3   12    22    32    42    52   ← row 3 copied
-4   13    23   [33]   43    53   ← row 4 copied (cursor here)
+2   11    21    31    41    51
+3   12    22    32    42    52
+4   13    23   [33]   43    53
 5   14    24    34    44    54
+
+yk  (count=1) → clipboard Column: ["33"]              (cursor cell only)
+y2k (count=2) → clipboard Column: ["32", "33"]        (1 above + cursor)
+y3k (count=3) → clipboard Column: ["31", "32", "33"]  (2 above + cursor)
 ```
+
+> Note: `yj` and `yk` produce a `Column` clipboard, not a `Rows` clipboard. Pasting restores to a single column, not entire rows.
 
 ---
 
-### 7.3 `yy` — Yank Entire Current Row
+### 7.4 `yy` — Yank Entire Current Row
 
 Copies all cells of the current row. With a count, copies N consecutive rows.
 
-`yy` also records the **cursor column as `col_offset`**, which is used by `gp`/`gP` to determine where to begin pasting in the target row (see [§9.2](#92-row-clipboard-with-col_offset)).
+`yy` also records the **cursor column as `col_offset`**, which is used by `gp`/`gP` to determine where to begin pasting in the target row (see [§9.3](#93-row-clipboard-with-col_offset)).
 
 ---
 
@@ -1325,7 +1338,7 @@ Copies rows 2 and 3. col_offset=2 (column C).
 
 ---
 
-### 7.4 `y$` / `y0`
+### 7.5 `y$` / `y0`
 
 ---
 
@@ -1384,13 +1397,67 @@ A count `N` pastes the clipboard content N times in sequence.
 
 ---
 
-### 8.3 Count
+### 8.3 Column Clipboard (`p` / `P`)
 
-`2p` pastes the clipboard content twice consecutively (cells appear doubled, or rows are duplicated one after another).
+For a `Column` clipboard, paste always **overwrites** — there is no vertical shift.
+
+| Command | Behaviour |
+|---|---|
+| `p` | Overwrites current column starting at cursor_row+1 (one below cursor) |
+| `P` | Overwrites current column starting at cursor_row (at cursor) |
+
+Count works: `2p` pastes the column strip twice consecutively downward.
 
 ---
 
-### 8.4 Examples
+**Scenario: `y3j` from C2, then paste with cursor at C5**
+
+Clipboard (Column): `["31", "32", "33"]`
+
+```
+Before pasting (cursor at C5):
+     A     B     C     D     E
+1   10    20    30    40    50
+2   11    21    31    41    51
+3   12    22    32    42    52
+4   13    23    33    43    53
+5   14    24   [34]   44    54
+6   15    25    35    45    55
+7   16    26    36    46    56
+
+After P (overwrite at cursor, C5):
+     A     B     C     D     E
+1   10    20    30    40    50
+2   11    21    31    41    51
+3   12    22    32    42    52
+4   13    23    33    43    53
+5   14    24   [31]   44    54   ← C5 overwritten
+6   15    25    32    45    55   ← C6 overwritten
+7   16    26    33    46    56   ← C7 overwritten
+
+After p (overwrite at cursor+1, C6):
+     A     B     C     D     E
+1   10    20    30    40    50
+2   11    21    31    41    51
+3   12    22    32    42    52
+4   13    23    33    43    53
+5   14    24   [34]   44    54   ← C5 unchanged
+6   15    25    31    45    55   ← C6 overwritten
+7   16    26    32    46    56   ← C7 overwritten
+8   17    27    33    47    57   ← C8 overwritten
+```
+
+> Note: for Column clipboard, `gp`/`gP` behave identically to `p`/`P`.
+
+---
+
+### 8.4 Count
+
+`2p` pastes the clipboard content twice consecutively (cells appear doubled, rows are duplicated one after another, or column strips are written consecutively downward).
+
+---
+
+### 8.5 Examples
 
 **Scenario: yank row 2, then paste below row 5**
 
@@ -1584,18 +1651,13 @@ After `gp`  (row 3's content written into row 6 starting at col C; nothing shift
 
 ---
 
-**Rows yanked with `yj` / `yk` — `col_offset = 0`**
+### 9.3 Column Clipboard
 
-When rows are yanked with directional motions (`yj`, `yk`, `dj`, `dk`), `col_offset` is always 0. Overwrite paste always starts at column A.
-
-```
-yj at C2 → clipboard has rows 2+3, col_offset=0
-gP on row 5 → row 5 overwritten starting at column A
-```
+> **Column clipboard**: For a `Column` clipboard (produced by `yj`/`yk`), `gp`/`gP` behave identically to `p`/`P` — both overwrite without shifting. The distinction between `gp`/`gP` and `p`/`P` only matters for `Cells` and `Rows` clipboard types.
 
 ---
 
-### 9.3 Count
+### 9.4 Count
 
 `2gp` writes the clipboard content twice consecutively (the second write begins immediately after the first ends, honouring `col_offset` each time).
 
@@ -1691,8 +1753,8 @@ Pressing `Esc` at any `g`-prefix state cancels and returns to Idle.
 |---|---|---|
 | `yh` | Yes | N cells left of cursor |
 | `yl` | Yes | N cells right of cursor |
-| `yj` | Yes | Current row + N rows below (col_offset=0) |
-| `yk` | Yes | N rows above + current row (col_offset=0) |
+| `yj` | Yes (N cells) | N cells downward from cursor in current column (`Column` clipboard) |
+| `yk` | Yes (N cells) | N cells upward ending at cursor in current column (`Column` clipboard) |
 | `yy` | Yes (rows) | N rows starting at cursor (col_offset=cursor col) |
 | `y0` | No | Column A to cell left of cursor |
 | `y$` | No | Cursor cell to end of row |
@@ -1705,10 +1767,14 @@ Pressing `Esc` at any `g`-prefix state cancels and returns to Idle.
 | `P` | Yes | Cells | Insert at cursor, shift right |
 | `p` | Yes | Rows | Insert below cursor row, shift rows down |
 | `P` | Yes | Rows | Insert at cursor row, shift rows down |
+| `p` | Yes | Column | Overwrite current column from cursor+1 downward |
+| `P` | Yes | Column | Overwrite current column from cursor downward |
 | `gp` | Yes | Cells | Overwrite at cursor+1, no shift |
 | `gP` | Yes | Cells | Overwrite at cursor, no shift |
 | `gp` | Yes | Rows | Overwrite row below at col_offset, no shift |
 | `gP` | Yes | Rows | Overwrite current row at col_offset, no shift |
+| `gp` | Yes | Column | Same as `p` for Column clipboard |
+| `gP` | Yes | Column | Same as `P` for Column clipboard |
 
 ### Count Grammar Summary
 

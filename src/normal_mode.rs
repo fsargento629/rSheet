@@ -36,6 +36,15 @@ pub enum Operator {
 pub enum ClipboardContent {
     /// A horizontal slice of raw cell values from a single row.
     Cells(Vec<String>),
+    /// A vertical slice of raw cell values from a single column.
+    ///
+    /// `row_offset` records the row the cursor was on at yank time.
+    /// Used by paste to land the content at the correct vertical position.
+    Column {
+        cells: Vec<String>,
+        #[allow(dead_code)]
+        row_offset: usize,
+    },
     /// One or more complete rows of raw cell values.
     ///
     /// `col_offset` records the column the cursor was on at yank time.
