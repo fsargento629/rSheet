@@ -190,11 +190,8 @@ fn run_app(
                                 app.move_to_start_line();
                             }
 
-                            // F2 → Visual mode
-                            (_, KeyCode::F(2)) => {
-                                app.reset_normal_cmd();
-                                app.enter_visual_mode();
-                            }
+                            // F2 → same as 'i' (enter insert mode) in normal mode
+                            (_, KeyCode::F(2)) => app.handle_normal_char('i'),
 
                             // Delete / Backspace → clear current cell
                             (_, KeyCode::Delete) | (_, KeyCode::Backspace) => {
