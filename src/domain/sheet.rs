@@ -743,51 +743,71 @@ impl Spreadsheet {
     /// shifting the remaining cells left and padding the right with empty cells.
     ///
     /// The dependency graph is fully rebuilt afterwards.
-    pub fn delete_cells_in_row(&mut self, row: usize, col_start: usize, col_end: usize) {
-        if row >= self.max_rows || col_start >= self.max_cols {
-            return;
+    /// Clear a single cell, setting its content to `""`.
+    ///
+    /// Returns the previous raw value.
+    /// Does NOT rebuild the dependency graph — callers that clear multiple
+    /// cells should call [`rebuild_graph_and_evaluate_all`] once afterwards.
+    pub fn clear_cell_raw(&mut self, row: usize, col: usize) -> String {
+        if row >= self.max_rows || col >= self.max_cols {
+            return String::new();
         }
-        let col_end = col_end.min(self.max_cols - 1);
-        if col_start > col_end {
-            return;
-        }
-        let count = col_end - col_start + 1;
-        for _ in 0..count {
-            if col_start < self.data[row].len() {
-                self.data[row].remove(col_start);
-            }
-        }
-        while self.data[row].len() < self.max_cols {
-            self.data[row].push(Cell::new(String::new()));
-        }
-        // Clear stale dependency entries and rebuild from scratch.
-        self.dependencies.clear();
-        self.dependents.clear();
-        self.rebuild_graph_and_evaluate_all();
+        let old = std::mem::replace(&mut self.data[row][col], Cell::new(String::new()));
+        old.raw
     }
 
-    /// Remove rows in the range `[row_start ..= row_end]`, shifting later rows
-    /// up and appending empty rows at the bottom to keep `max_rows` constant.
+    /// Clear every cell in `row_start..=row_end`, `col_start..=col_end`,
+    /// setting each to `""`.
     ///
-    /// The dependency graph is fully rebuilt afterwards.
-    pub fn delete_rows(&mut self, row_start: usize, row_end: usize) {
-        if row_start >= self.max_rows {
-            return;
-        }
-        let row_end = row_end.min(self.max_rows - 1);
-        let count = row_end - row_start + 1;
-        for _ in 0..count {
-            if row_start < self.data.len() {
-                self.data.remove(row_start);
+    /// Returns the cleared contents as a 2-D grid `[row][col]` of raw strings.
+    /// Rebuilds the dependency graph once after all cells have been cleared.
+    pub fn clear_range(
+        &mut self,
+        row_start: usize,
+        row_end: usize,
+        col_start: usize,
+        col_end: usize,
+    ) -> Vec<Vec<String>> {
+        let row_end = row_end.min(self.max_rows.saturating_sub(1));
+        let col_end = col_end.min(self.max_cols.saturating_sub(1));
+
+        let mut result = Vec::new();
+        for r in row_start..=row_end {
+            let mut row_vals = Vec::new();
+            for c in col_start..=col_end {
+                row_vals.push(self.clear_cell_raw(r, c));
             }
+            result.push(row_vals);
         }
-        while self.data.len() < self.max_rows {
-            self.data
-                .push(vec![Cell::new(String::new()); self.max_cols]);
-        }
+
         self.dependencies.clear();
         self.dependents.clear();
         self.rebuild_graph_and_evaluate_all();
+
+        result
+    }
+
+    /// Clear all cells in a single `row`.
+    ///
+    /// Returns the previous raw values of every cell in the row.
+    /// Rebuilds the dependency graph afterwards.
+    pub fn clear_row(&mut self, row: usize) -> Vec<String> {
+        let max_col = self.max_cols.saturating_sub(1);
+        self.clear_range(row, row, 0, max_col)
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+    }
+
+    /// Clear a single cell and rebuild the dependency graph.
+    ///
+    /// Returns the previous raw value.
+    pub fn clear_cell(&mut self, row: usize, col: usize) -> String {
+        let old = self.clear_cell_raw(row, col);
+        self.dependencies.clear();
+        self.dependents.clear();
+        self.rebuild_graph_and_evaluate_all();
+        old
     }
 
     /// Insert `cells` (raw strings) into `row` at column `col`, shifting
@@ -981,6 +1001,77 @@ mod tests {
         assert_eq!(
             sheet.get_cell(0, 2).unwrap().computed,
             CellValue::Number(110.0)
+        );
+    }
+
+    #[test]
+    fn test_clear_cell() {
+        let mut sheet = Spreadsheet::new(5, 5);
+        sheet.set_cell(0, 0, "42".to_string());
+        assert_eq!(sheet.get_cell(0, 0).unwrap().raw, "42");
+
+        let old = sheet.clear_cell(0, 0);
+        assert_eq!(old, "42");
+        assert_eq!(sheet.get_cell(0, 0).unwrap().raw, "");
+        // Row count must not change
+        assert_eq!(sheet.max_rows, 5);
+        assert_eq!(sheet.data.len(), 5);
+    }
+
+    #[test]
+    fn test_clear_row() {
+        let mut sheet = Spreadsheet::new(5, 5);
+        for c in 0..5 {
+            sheet.set_cell(1, c, format!("{}", c + 10));
+        }
+
+        let old = sheet.clear_row(1);
+        assert_eq!(old, vec!["10", "11", "12", "13", "14"]);
+        for c in 0..5 {
+            assert_eq!(sheet.get_cell(1, c).unwrap().raw, "");
+        }
+        // Neighbouring rows must be untouched
+        assert_eq!(sheet.data.len(), 5);
+    }
+
+    #[test]
+    fn test_clear_range() {
+        let mut sheet = Spreadsheet::new(5, 5);
+        for r in 0..3 {
+            for c in 0..3 {
+                sheet.set_cell(r, c, format!("{}{}", r, c));
+            }
+        }
+
+        let old = sheet.clear_range(0, 1, 1, 2);
+        assert_eq!(old, vec![vec!["01", "02"], vec!["11", "12"]]);
+
+        // Cleared cells are empty
+        assert_eq!(sheet.get_cell(0, 1).unwrap().raw, "");
+        assert_eq!(sheet.get_cell(1, 2).unwrap().raw, "");
+        // Untouched cells remain
+        assert_eq!(sheet.get_cell(0, 0).unwrap().raw, "00");
+        assert_eq!(sheet.get_cell(2, 0).unwrap().raw, "20");
+        // Row / col counts unchanged
+        assert_eq!(sheet.data.len(), 5);
+    }
+
+    #[test]
+    fn test_clear_cell_reactive() {
+        let mut sheet = Spreadsheet::new(5, 5);
+        sheet.set_cell(0, 0, "10".to_string());
+        sheet.set_cell(1, 0, "=A1*2".to_string());
+
+        assert_eq!(
+            sheet.get_cell(1, 0).unwrap().computed,
+            CellValue::Number(20.0)
+        );
+
+        sheet.clear_cell(0, 0);
+        // After clearing A1, A2 should no longer yield 20
+        assert_ne!(
+            sheet.get_cell(1, 0).unwrap().computed,
+            CellValue::Number(20.0)
         );
     }
 

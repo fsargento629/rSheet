@@ -146,8 +146,7 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub fn delete_cell(&mut self) {
-        self.sheet
-            .set_cell(self.cursor_row, self.cursor_col, String::new());
+        self.sheet.clear_cell(self.cursor_row, self.cursor_col);
         self.status_message = String::from("Cell deleted");
     }
 
@@ -310,11 +309,10 @@ impl App {
             }
             NormalCommand::DeleteRow { count } => {
                 let row_end = (self.cursor_row + count - 1).min(self.sheet.max_rows - 1);
-                // Yank before delete so dd implicitly fills the clipboard.
-                let rows = self.collect_rows(self.cursor_row, row_end);
-                self.clipboard = Some(ClipboardContent::Rows(rows));
-                self.sheet.delete_rows(self.cursor_row, row_end);
-                self.cursor_row = self.cursor_row.min(self.sheet.max_rows - 1);
+                let deleted =
+                    self.sheet
+                        .clear_range(self.cursor_row, row_end, 0, self.sheet.max_cols - 1);
+                self.clipboard = Some(ClipboardContent::Rows(deleted));
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", count);
             }
@@ -369,72 +367,71 @@ impl App {
         let max_row = self.sheet.max_rows - 1;
 
         match motion {
-            // Delete `count` cells to the LEFT of cursor (not including cursor).
+            // Clear `count` cells to the LEFT of cursor (not including cursor).
             Motion::Left | Motion::WordBack => {
                 if col == 0 {
                     return;
                 }
                 let col_end = col - 1;
                 let col_start = col.saturating_sub(count);
-                // Yank deleted range into clipboard.
-                let cells = self.collect_cells_in_row(row, col_start, col_end);
-                self.clipboard = Some(ClipboardContent::Cells(cells));
-                self.sheet.delete_cells_in_row(row, col_start, col_end);
-                // Cursor stays at same index; content under it shifts.
-                self.cursor_col = col_start.min(self.sheet.max_cols - 1);
+                let deleted = self.sheet.clear_range(row, row, col_start, col_end);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().next().unwrap_or_default(),
+                ));
+                self.cursor_col = col_start;
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} cell(s) left", col_end - col_start + 1);
             }
-            // Delete `count` cells to the RIGHT of cursor (not including cursor).
+            // Clear `count` cells to the RIGHT of cursor (not including cursor).
             Motion::Right | Motion::WordForward => {
                 if col >= max_col {
                     return;
                 }
                 let col_start = col + 1;
                 let col_end = (col + count).min(max_col);
-                let cells = self.collect_cells_in_row(row, col_start, col_end);
-                self.clipboard = Some(ClipboardContent::Cells(cells));
-                self.sheet.delete_cells_in_row(row, col_start, col_end);
+                let deleted = self.sheet.clear_range(row, row, col_start, col_end);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().next().unwrap_or_default(),
+                ));
                 // Cursor stays at col (same position, same content).
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} cell(s) right", col_end - col_start + 1);
             }
-            // Delete rows from cursor down to cursor+count (inclusive).
+            // Clear rows from cursor down to cursor+count (inclusive).
             Motion::Down => {
                 let row_end = (row + count).min(max_row);
-                let rows = self.collect_rows(row, row_end);
-                self.clipboard = Some(ClipboardContent::Rows(rows));
-                self.sheet.delete_rows(row, row_end);
-                self.cursor_row = row.min(self.sheet.max_rows - 1);
+                let deleted = self.sheet.clear_range(row, row_end, 0, max_col);
+                self.clipboard = Some(ClipboardContent::Rows(deleted));
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", row_end - row + 1);
             }
-            // Delete rows from cursor-count up to cursor (inclusive).
+            // Clear rows from cursor-count up to cursor (inclusive).
             Motion::Up => {
                 let row_start = row.saturating_sub(count);
-                let rows = self.collect_rows(row_start, row);
-                self.clipboard = Some(ClipboardContent::Rows(rows));
-                self.sheet.delete_rows(row_start, row);
-                self.cursor_row = row_start.min(self.sheet.max_rows - 1);
+                let deleted = self.sheet.clear_range(row_start, row, 0, max_col);
+                self.clipboard = Some(ClipboardContent::Rows(deleted));
+                self.cursor_row = row_start;
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", row - row_start + 1);
             }
-            // Delete from cursor to end of row (cursor included).
+            // Clear from cursor to end of row (cursor included).
             Motion::EndOfRow => {
-                let cells = self.collect_cells_in_row(row, col, max_col);
-                self.clipboard = Some(ClipboardContent::Cells(cells));
-                self.sheet.delete_cells_in_row(row, col, max_col);
+                let deleted = self.sheet.clear_range(row, row, col, max_col);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().next().unwrap_or_default(),
+                ));
                 self.adjust_viewport();
                 self.status_message = String::from("Deleted to end of row");
             }
-            // Delete from start of row to cursor-1 (cursor NOT included).
+            // Clear from start of row to cursor-1 (cursor NOT included).
             Motion::StartOfRow => {
                 if col == 0 {
                     return;
                 }
-                let cells = self.collect_cells_in_row(row, 0, col - 1);
-                self.clipboard = Some(ClipboardContent::Cells(cells));
-                self.sheet.delete_cells_in_row(row, 0, col - 1);
+                let deleted = self.sheet.clear_range(row, row, 0, col - 1);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().next().unwrap_or_default(),
+                ));
                 self.cursor_col = 0;
                 self.adjust_viewport();
                 self.status_message = String::from("Deleted to start of row");
