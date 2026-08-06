@@ -78,6 +78,7 @@ impl Cell {
     }
 }
 
+#[derive(Clone)]
 pub struct Spreadsheet {
     pub data: Vec<Vec<Cell>>,
     pub max_rows: usize,

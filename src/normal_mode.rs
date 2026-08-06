@@ -92,6 +92,8 @@ pub enum NormalCommand {
     DeleteCol { count: usize },
     /// The accumulated state was cancelled (Esc, or an unrecognised key in operator-pending).
     Reset,
+    /// Undo the last `count` changes.
+    Undo { count: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +312,7 @@ impl NormalModeState {
             'p' => {
                 let c = self.c1();
                 self.reset();
-                Some(NormalCommand::Paste {
+                Some(NormalCommand::OverwritePaste {
                     before: false,
                     count: c,
                 })
@@ -318,7 +320,7 @@ impl NormalModeState {
             'P' => {
                 let c = self.c1();
                 self.reset();
-                Some(NormalCommand::Paste {
+                Some(NormalCommand::OverwritePaste {
                     before: true,
                     count: c,
                 })
@@ -350,6 +352,13 @@ impl NormalModeState {
             'q' | 'Q' => {
                 self.reset();
                 Some(NormalCommand::Quit)
+            }
+
+            // ── Undo ──────────────────────────────────────────────────────────
+            'u' => {
+                let c = self.c1();
+                self.reset();
+                Some(NormalCommand::Undo { count: c })
             }
 
             // ── Unknown: reset silently ───────────────────────────────────────
@@ -459,14 +468,14 @@ impl NormalModeState {
         match ch {
             'p' => {
                 self.reset();
-                Some(NormalCommand::OverwritePaste {
+                Some(NormalCommand::Paste {
                     before: false,
                     count: c,
                 })
             }
             'P' => {
                 self.reset();
-                Some(NormalCommand::OverwritePaste {
+                Some(NormalCommand::Paste {
                     before: true,
                     count: c,
                 })
@@ -711,14 +720,14 @@ mod tests {
         let mut s = NormalModeState::new();
         assert!(matches!(
             s.process_char('p'),
-            Some(NormalCommand::Paste {
+            Some(NormalCommand::OverwritePaste {
                 before: false,
                 count: 1
             })
         ));
         assert!(matches!(
             s.process_char('P'),
-            Some(NormalCommand::Paste {
+            Some(NormalCommand::OverwritePaste {
                 before: true,
                 count: 1
             })

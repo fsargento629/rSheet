@@ -64,6 +64,10 @@ pub struct App {
     // For tracking mouse click events and cell selection
     pub last_click_time: Option<Instant>,
     pub last_clicked_cell: Option<(usize, usize)>,
+
+    /// Stack of spreadsheet snapshots for undo. Capped at `undo_stack_limit`.
+    pub undo_stack: Vec<Spreadsheet>,
+    pub undo_stack_limit: usize,
 }
 
 impl App {
@@ -86,6 +90,21 @@ impl App {
             clipboard: None,
             last_click_time: None,
             last_clicked_cell: None,
+            undo_stack: Vec::new(),
+            undo_stack_limit: 20,
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Undo stack
+    // -------------------------------------------------------------------------
+
+    /// Push a snapshot of the current sheet onto the undo stack, evicting the
+    /// oldest entry if the stack is at capacity.
+    fn push_undo(&mut self) {
+        self.undo_stack.push(self.sheet.clone());
+        if self.undo_stack.len() > self.undo_stack_limit {
+            self.undo_stack.remove(0);
         }
     }
 
@@ -130,6 +149,7 @@ impl App {
     /// Commit or discard the current insert buffer, then return to Visual mode.
     pub fn exit_insert_mode(&mut self, commit: bool) {
         if commit {
+            self.push_undo();
             self.sheet
                 .set_cell(self.cursor_row, self.cursor_col, self.edit_buffer.clone());
             self.status_message = String::from("Cell updated");
@@ -146,6 +166,7 @@ impl App {
     // -------------------------------------------------------------------------
 
     pub fn delete_cell(&mut self) {
+        self.push_undo();
         self.sheet.clear_cell(self.cursor_row, self.cursor_col);
         self.status_message = String::from("Cell deleted");
     }
@@ -305,9 +326,11 @@ impl App {
                 self.execute_motion(motion, count);
             }
             NormalCommand::Delete { motion, count } => {
+                self.push_undo();
                 self.execute_delete(motion, count);
             }
             NormalCommand::DeleteRow { count } => {
+                self.push_undo();
                 let row_end = (self.cursor_row + count - 1).min(self.sheet.max_rows - 1);
                 let deleted =
                     self.sheet
@@ -333,15 +356,19 @@ impl App {
                 self.status_message = format!("Yanked {} row(s)", n);
             }
             NormalCommand::Paste { before, count } => {
+                self.push_undo();
                 self.execute_paste(before, count);
             }
             NormalCommand::OverwritePaste { before, count } => {
+                self.push_undo();
                 self.execute_overwrite_paste(before, count);
             }
             NormalCommand::ColDelete { motion, count } => {
+                self.push_undo();
                 self.execute_col_delete(motion, count);
             }
             NormalCommand::DeleteCol { count } => {
+                self.push_undo();
                 let col_end = (self.cursor_col + count - 1).min(self.sheet.max_cols - 1);
                 let deleted =
                     self.sheet
@@ -361,6 +388,18 @@ impl App {
             NormalCommand::Save => self.save_spreadsheet(),
             NormalCommand::Quit => self.should_quit = true,
             NormalCommand::Reset => {}
+            NormalCommand::Undo { count } => {
+                let available = self.undo_stack.len();
+                if available == 0 {
+                    self.status_message = String::from("Nothing to undo");
+                } else {
+                    let steps = count.min(available);
+                    let restore_idx = available - steps;
+                    self.sheet = self.undo_stack[restore_idx].clone();
+                    self.undo_stack.truncate(restore_idx);
+                    self.status_message = format!("Undid {} change(s)", steps);
+                }
+            }
         }
         self.update_normal_status();
     }
