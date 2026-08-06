@@ -278,7 +278,7 @@ impl App {
         let pending = self.normal_cmd.pending_keys();
         if pending.is_empty() {
             self.status_message = String::from(
-                "NORMAL -- hjkl/arrows: nav | d: delete | y: yank | p/P: paste | gp/gP: overwrite paste | 'a': visual | 'q': quit",
+                "NORMAL -- hjkl/arrows: nav | d: row-delete | gd: col-delete | y: yank | p/P: paste | gp/gP: overwrite paste | 'a': visual | 'q': quit",
             );
         } else {
             self.status_message = format!(
@@ -338,11 +338,28 @@ impl App {
             NormalCommand::OverwritePaste { before, count } => {
                 self.execute_overwrite_paste(before, count);
             }
+            NormalCommand::ColDelete { motion, count } => {
+                self.execute_col_delete(motion, count);
+            }
+            NormalCommand::DeleteCol { count } => {
+                let col_end = (self.cursor_col + count - 1).min(self.sheet.max_cols - 1);
+                let deleted =
+                    self.sheet
+                        .clear_range(0, self.sheet.max_rows - 1, self.cursor_col, col_end);
+                // Transpose to Rows for clipboard: each "row" is one column's worth of cells.
+                // Store as Cells per column; use the first column's data for single-col case.
+                // Simplest representation: flatten into Rows where each row maps to a column slice.
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows: deleted,
+                    col_offset: self.cursor_col,
+                });
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} column(s)", count);
+            }
             NormalCommand::EnterVisualMode => self.enter_visual_mode(),
             NormalCommand::EnterInsertMode(s) => self.enter_insert_mode(s),
             NormalCommand::Save => self.save_spreadsheet(),
             NormalCommand::Quit => self.should_quit = true,
-            NormalCommand::DeleteCell => self.delete_cell(),
             NormalCommand::Reset => {}
         }
         self.update_normal_status();
@@ -450,6 +467,103 @@ impl App {
                 self.cursor_col = 0;
                 self.adjust_viewport();
                 self.status_message = String::from("Deleted to start of row");
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Column-axis delete execution  (gd + motion)
+    // -------------------------------------------------------------------------
+
+    fn execute_col_delete(&mut self, motion: Motion, count: usize) {
+        let row = self.cursor_row;
+        let col = self.cursor_col;
+        let max_col = self.sheet.max_cols - 1;
+        let max_row = self.sheet.max_rows - 1;
+
+        match motion {
+            // gd + j: clear `count` cells BELOW cursor in the same column (not including cursor).
+            Motion::Down | Motion::WordForward => {
+                if row >= max_row {
+                    return;
+                }
+                let row_start = row + 1;
+                let row_end = (row + count).min(max_row);
+                let deleted = self.sheet.clear_range(row_start, row_end, col, col);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().flatten().collect(),
+                ));
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} cell(s) below", row_end - row_start + 1);
+            }
+            // gd + k: clear `count` cells ABOVE cursor in the same column (not including cursor).
+            Motion::Up | Motion::WordBack => {
+                if row == 0 {
+                    return;
+                }
+                let row_end = row - 1;
+                let row_start = row.saturating_sub(count);
+                let deleted = self.sheet.clear_range(row_start, row_end, col, col);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().flatten().collect(),
+                ));
+                self.cursor_row = row_start;
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} cell(s) above", row_end - row_start + 1);
+            }
+            // gd + l: clear `count` entire columns to the RIGHT of cursor.
+            Motion::Right => {
+                if col >= max_col {
+                    return;
+                }
+                let col_start = col + 1;
+                let col_end = (col + count).min(max_col);
+                let deleted = self.sheet.clear_range(0, max_row, col_start, col_end);
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows: deleted,
+                    col_offset: col_start,
+                });
+                self.adjust_viewport();
+                self.status_message =
+                    format!("Deleted {} column(s) right", col_end - col_start + 1);
+            }
+            // gd + h: clear `count` entire columns to the LEFT of cursor.
+            Motion::Left => {
+                if col == 0 {
+                    return;
+                }
+                let col_end = col - 1;
+                let col_start = col.saturating_sub(count);
+                let deleted = self.sheet.clear_range(0, max_row, col_start, col_end);
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows: deleted,
+                    col_offset: col_start,
+                });
+                self.cursor_col = col_start;
+                self.adjust_viewport();
+                self.status_message = format!("Deleted {} column(s) left", col_end - col_start + 1);
+            }
+            // gd + $: clear current column from cursor row down to last row.
+            Motion::EndOfRow => {
+                let deleted = self.sheet.clear_range(row, max_row, col, col);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().flatten().collect(),
+                ));
+                self.adjust_viewport();
+                self.status_message = String::from("Deleted column to bottom");
+            }
+            // gd + 0: clear current column from top to cursor row.
+            Motion::StartOfRow => {
+                if row == 0 {
+                    return;
+                }
+                let deleted = self.sheet.clear_range(0, row, col, col);
+                self.clipboard = Some(ClipboardContent::Cells(
+                    deleted.into_iter().flatten().collect(),
+                ));
+                self.cursor_row = 0;
+                self.adjust_viewport();
+                self.status_message = String::from("Deleted column to top");
             }
         }
     }

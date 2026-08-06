@@ -34,16 +34,90 @@ rSheet uses a three-mode editing model inspired by vi. The current mode is alway
 
 #### Normal mode
 
+##### Navigation
+
 | Key | Action |
 |-----|--------|
-| `h` / `j` / `k` / `l` or Arrow keys | Navigate cells |
+| `h` / `j` / `k` / `l` or Arrow keys | Move cursor left / down / up / right (count supported, e.g. `3j`) |
+| `w` | Move right one cell (alias for `l`) |
+| `b` | Move left one cell (alias for `h`) |
+| `0` or `Home` | Jump to column A of current row |
+| `$` | Jump to last column of current row |
+| `Shift+Home` | Jump to row 1 of current column |
+| `Ctrl+Home` | Jump to cell A1 |
+
+##### Mode transitions
+
+| Key | Action |
+|-----|--------|
 | `a` or `F2` | Enter **Visual** mode |
-| `i` | Enter **Insert** mode on current cell (blank buffer) |
-| `=` | Enter **Insert** mode and seed buffer with `=` (formula) |
+| `i` | Enter **Insert** mode with blank buffer |
+| `=` | Enter **Insert** mode seeded with `=` (formula shortcut) |
 | `Enter` | Enter **Insert** mode with current cell content |
+
+##### Cell / file
+
+| Key | Action |
+|-----|--------|
 | `Delete` / `Backspace` | Clear current cell |
-| `s` | Save spreadsheet |
-| `q` | Quit |
+| `s` / `S` | Save spreadsheet |
+| `q` / `Q` | Quit |
+| `Esc` | Cancel pending command |
+
+##### Row-axis delete (`d`)
+
+Operates on entire rows for vertical motions, and on partial rows for horizontal motions. Counts are supported (e.g. `3dh`, `2dj`).
+
+| Key sequence | Action |
+|--------------|--------|
+| `dh` | Clear cells to the left of the cursor in the current row |
+| `dl` | Clear cells to the right of the cursor in the current row |
+| `dj` | Clear the current row and rows below (per count) |
+| `dk` | Clear the current row and rows above (per count) |
+| `d$` | Clear from cursor to end of row |
+| `d0` | Clear from start of row to the cell before the cursor |
+| `dd` | Clear entire current row; `Ndd` clears N rows |
+
+##### Column-axis delete (`gd`)
+
+Mirror of `d` operating on the column axis. Counts are supported (e.g. `3gdh`, `2gdj`).
+
+| Key sequence | Action |
+|--------------|--------|
+| `gdj` | Clear cells below the cursor in the current column |
+| `gdk` | Clear cells above the cursor in the current column |
+| `gdl` | Clear entire columns to the right of the cursor |
+| `gdh` | Clear entire columns to the left of the cursor |
+| `gd$` | Clear current column from cursor row to the bottom |
+| `gd0` | Clear current column from the top to the cursor row |
+| `gdd` | Clear entire current column; `Ngdd` clears N columns |
+
+##### Yank (`y`)
+
+| Key sequence | Action |
+|--------------|--------|
+| `yh` | Yank cells to the left of the cursor |
+| `yl` | Yank cells to the right of the cursor |
+| `yj` | Yank rows downward |
+| `yk` | Yank rows upward |
+| `y$` | Yank from cursor to end of row |
+| `y0` | Yank from start of row to cursor |
+| `yy` | Yank entire current row (remembers cursor column for offset paste); `Nyy` yanks N rows |
+
+##### Paste
+
+| Key | Action |
+|-----|--------|
+| `p` | Insert after cursor / below current row — shifts existing content |
+| `P` | Insert before cursor / above current row — shifts existing content |
+| `gp` | Overwrite starting at cursor+1 (cells) or row+1 (rows) — no shifting; row paste uses yank column offset |
+| `gP` | Overwrite starting at cursor / current row — no shifting; row paste uses yank column offset |
+
+##### State machine grammar
+
+Normal mode uses a multi-state parser. The general grammar is `[count1] operator [count2] motion`. There are four states: **Idle**, **OperatorPending** (entered after `d` or `y`), **GPrefix** (entered after `g`), and **GdOperatorPending** (entered after `gd`). The status bar displays pending keys while a command is being built. `Esc` cancels at any point.
+
+See [NORMAL_MODE.md](NORMAL_MODE.md) for a complete command reference with detailed examples.
 
 #### Visual mode
 

@@ -77,10 +77,10 @@ pub enum NormalCommand {
     Save,
     /// Quit the application (`q` / `Q`).
     Quit,
-    /// Delete the current cell content only (`Delete` / `Backspace` handled by caller;
-    /// this variant is not currently produced but reserved for future use).
-    #[allow(dead_code)]
-    DeleteCell,
+    /// Apply a column-axis delete driven by `motion` (`gd` + motion).
+    ColDelete { motion: Motion, count: usize },
+    /// Clear `count` complete columns starting at the cursor column (`gdd`, `2gdd`, …).
+    DeleteCol { count: usize },
     /// The accumulated state was cancelled (Esc, or an unrecognised key in operator-pending).
     Reset,
 }
@@ -95,6 +95,8 @@ enum SubState {
     OperatorPending,
     /// `g` has been typed; waiting for the second character.
     GPrefix,
+    /// `gd` has been typed; waiting for count2 + motion (mirrors OperatorPending).
+    GdOperatorPending,
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +147,7 @@ impl NormalModeState {
         }
         match self.sub_state {
             SubState::GPrefix => s.push('g'),
+            SubState::GdOperatorPending => s.push_str("gd"),
             SubState::OperatorPending => {
                 if let Some(op) = self.operator {
                     s.push(match op {
@@ -211,6 +214,7 @@ impl NormalModeState {
             SubState::Idle => self.process_idle(ch),
             SubState::OperatorPending => self.process_pending(ch),
             SubState::GPrefix => self.process_g_prefix(ch),
+            SubState::GdOperatorPending => self.process_gd_pending(ch),
         }
     }
 
@@ -441,8 +445,7 @@ impl NormalModeState {
     // -------------------------------------------------------------------------
 
     fn process_g_prefix(&mut self, ch: char) -> Option<NormalCommand> {
-        // counts are not meaningful for g-commands right now; use c1 if one
-        // was typed before 'g' (e.g. "3gp" repeats 3 times).
+        // A count typed before 'g' (e.g. "3gp") is carried via count1.
         let c = self.c1();
         match ch {
             'p' => {
@@ -459,6 +462,111 @@ impl NormalModeState {
                     count: c,
                 })
             }
+            // gd — enter column-delete operator-pending state.
+            // count1 is preserved; count2 will be accumulated in the next state.
+            'd' => {
+                self.sub_state = SubState::GdOperatorPending;
+                None
+            }
+            _ => {
+                self.reset();
+                Some(NormalCommand::Reset)
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // gd operator-pending state  (column-axis delete)
+    // -------------------------------------------------------------------------
+
+    fn process_gd_pending(&mut self, ch: char) -> Option<NormalCommand> {
+        match ch {
+            // ── Count2 accumulation ───────────────────────────────────────────
+            '1'..='9' => {
+                self.count2 = self.count2 * 10 + (ch as usize - '0' as usize);
+                None
+            }
+            '0' => {
+                if self.count2 > 0 {
+                    self.count2 *= 10;
+                    None
+                } else {
+                    // '0' as motion → start-of-row axis → clear column from top
+                    let count = self.total();
+                    self.reset();
+                    Some(NormalCommand::ColDelete {
+                        motion: Motion::StartOfRow,
+                        count,
+                    })
+                }
+            }
+
+            // ── Motions ──────────────────────────────────────────────────
+            'h' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::Left,
+                    count: c,
+                })
+            }
+            'j' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::Down,
+                    count: c,
+                })
+            }
+            'k' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::Up,
+                    count: c,
+                })
+            }
+            'l' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::Right,
+                    count: c,
+                })
+            }
+            'w' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::WordForward,
+                    count: c,
+                })
+            }
+            'b' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::WordBack,
+                    count: c,
+                })
+            }
+            '$' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::ColDelete {
+                    motion: Motion::EndOfRow,
+                    count: c,
+                })
+            }
+
+            // ── gdd — clear entire current column ────────────────────────
+            'd' => {
+                let c = self.c1();
+                self.reset();
+                Some(NormalCommand::DeleteCol { count: c })
+            }
+
+            // ── Anything else: cancel ──────────────────────────────────
             _ => {
                 self.reset();
                 Some(NormalCommand::Reset)
