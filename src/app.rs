@@ -583,8 +583,8 @@ impl App {
                 if col == 0 {
                     return;
                 }
-                let col_end = col - 1;
-                let col_start = col.saturating_sub(count);
+                let col_end = col;
+                let col_start = col.saturating_sub(count - 1);
                 let cells = self.collect_cells_in_row(row, col_start, col_end);
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Cells(cells));
@@ -594,8 +594,8 @@ impl App {
                 if col >= max_col {
                     return;
                 }
-                let col_start = col + 1;
-                let col_end = (col + count).min(max_col);
+                let col_start = col;
+                let col_end = (col + count - 1).min(max_col);
                 let cells = self.collect_cells_in_row(row, col_start, col_end);
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Cells(cells));
