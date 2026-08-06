@@ -167,23 +167,11 @@ fn run_app(
                             // Cancel / reset pending command
                             (_, KeyCode::Esc) => app.reset_normal_cmd(),
 
-                            // Arrow-key navigation (resets state machine)
-                            (_, KeyCode::Up) => {
-                                app.reset_normal_cmd();
-                                app.move_cursor(Direction::Vertical(-1));
-                            }
-                            (_, KeyCode::Down) => {
-                                app.reset_normal_cmd();
-                                app.move_cursor(Direction::Vertical(1));
-                            }
-                            (_, KeyCode::Left) => {
-                                app.reset_normal_cmd();
-                                app.move_cursor(Direction::Horizontal(-1));
-                            }
-                            (_, KeyCode::Right) => {
-                                app.reset_normal_cmd();
-                                app.move_cursor(Direction::Horizontal(1));
-                            }
+                            // Arrow keys: translate to hjkl and process through normal mode
+                            (_, KeyCode::Up) => app.handle_normal_char('k'),
+                            (_, KeyCode::Down) => app.handle_normal_char('j'),
+                            (_, KeyCode::Left) => app.handle_normal_char('h'),
+                            (_, KeyCode::Right) => app.handle_normal_char('l'),
 
                             // Home key family
                             (KeyModifiers::CONTROL, KeyCode::Home) => {
