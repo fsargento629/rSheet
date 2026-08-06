@@ -4,26 +4,9 @@
 
 ### Normal mode command fixes
 
-#### general refactors
-  -  Arrows should be treated exactly like hjkl when in normal mode. for example d + right arrow should be like d+l
-  - ENTER should no longer go to edit and insert mode, it should be treated like a j (going down), so d + ENTER should be like d + j
-  - '=' should clear normal mode and start insert mode in the current cell, erasing the current cell and adding a '=' as the first character (like what happens when you press = when in visual mode)
 
 #### Better delete 
-  - Delete should not remove a line, it should just make it empty. The line numbers should not change after a delete. 
   - Alternate delete with gd for vertical removals (keep d for horizontal removals). gor example gd1j removes one cell below  (vertically), while d1j removes an entire line below
-
-#### better paste
-    - Paste should have an alternate version, denominated by 'g'. Several commands will be in the future given an alternate version, and the g before a command is the idiomatic way of saying this for them
-                  Key | Behaviour |
-                |-----|-----------|
-                | `p` | Insert after cursor (current behaviour) |
-                | `P` | Insert before cursor (current behaviour) |
-                | `gp` | Overwrite paste starting at cursor+1 (cells) / cursor row+1 (rows) |
-                | `gP` | Overwrite paste starting at cursor (cells) / cursor row (rows)
-  - Additionally, "yy" followed by paste should paste a line, but shifted depending on the horizontal value of the cursor. It should behave like 'yNl', where N is the amount of cells in the line
-      - This is to fix the behaviour where you yank a line and when you paste it below and a few cells to the side, it is pasted on the same line as the cursor, but not starting at its column
-
 
 
 ### visual/insert mode fixes

@@ -37,7 +37,14 @@ pub enum ClipboardContent {
     /// A horizontal slice of raw cell values from a single row.
     Cells(Vec<String>),
     /// One or more complete rows of raw cell values.
-    Rows(Vec<Vec<String>>),
+    ///
+    /// `col_offset` records the column the cursor was on at yank time.
+    /// Used by overwrite-paste (`gp`/`gP`) to land the content at the
+    /// correct horizontal position instead of always starting at column 0.
+    Rows {
+        rows: Vec<Vec<String>>,
+        col_offset: usize,
+    },
 }
 
 /// A fully-resolved command ready for the application to execute.
@@ -54,7 +61,11 @@ pub enum NormalCommand {
     /// Yank `count` complete rows starting at the cursor row (`yy`, `2yy`, …).
     YankRow { count: usize },
     /// Paste clipboard content before or after the cursor, repeated `count` times.
+    /// Inserts a new row / shifts cells — existing content is displaced.
     Paste { before: bool, count: usize },
+    /// Overwrite-paste: write clipboard over existing cells without shifting.
+    /// `before: true` → start at cursor (gP); `before: false` → start at cursor+1 (gp).
+    OverwritePaste { before: bool, count: usize },
     /// Enter Visual mode (`a` / F2 handled separately for F2).
     EnterVisualMode,
     /// Enter Insert mode, optionally seeding the buffer with `initial`.
@@ -82,6 +93,8 @@ pub enum NormalCommand {
 enum SubState {
     Idle,
     OperatorPending,
+    /// `g` has been typed; waiting for the second character.
+    GPrefix,
 }
 
 // ---------------------------------------------------------------------------
@@ -130,11 +143,17 @@ impl NormalModeState {
         if self.count1 > 0 {
             s.push_str(&self.count1.to_string());
         }
-        if let Some(op) = self.operator {
-            s.push(match op {
-                Operator::Delete => 'd',
-                Operator::Yank => 'y',
-            });
+        match self.sub_state {
+            SubState::GPrefix => s.push('g'),
+            SubState::OperatorPending => {
+                if let Some(op) = self.operator {
+                    s.push(match op {
+                        Operator::Delete => 'd',
+                        Operator::Yank => 'y',
+                    });
+                }
+            }
+            SubState::Idle => {}
         }
         if self.count2 > 0 {
             s.push_str(&self.count2.to_string());
@@ -191,6 +210,7 @@ impl NormalModeState {
         match self.sub_state {
             SubState::Idle => self.process_idle(ch),
             SubState::OperatorPending => self.process_pending(ch),
+            SubState::GPrefix => self.process_g_prefix(ch),
         }
     }
 
@@ -289,6 +309,12 @@ impl NormalModeState {
                     before: true,
                     count: c,
                 })
+            }
+
+            // ── g-prefix ──────────────────────────────────────────────────────
+            'g' => {
+                self.sub_state = SubState::GPrefix;
+                None
             }
 
             // ── Mode transitions ──────────────────────────────────────────────
@@ -409,6 +435,36 @@ impl NormalModeState {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    // g-prefix state
+    // -------------------------------------------------------------------------
+
+    fn process_g_prefix(&mut self, ch: char) -> Option<NormalCommand> {
+        // counts are not meaningful for g-commands right now; use c1 if one
+        // was typed before 'g' (e.g. "3gp" repeats 3 times).
+        let c = self.c1();
+        match ch {
+            'p' => {
+                self.reset();
+                Some(NormalCommand::OverwritePaste {
+                    before: false,
+                    count: c,
+                })
+            }
+            'P' => {
+                self.reset();
+                Some(NormalCommand::OverwritePaste {
+                    before: true,
+                    count: c,
+                })
+            }
+            _ => {
+                self.reset();
+                Some(NormalCommand::Reset)
+            }
+        }
+    }
 
     fn op_cmd(op: Operator, motion: Motion, count: usize) -> NormalCommand {
         match op {

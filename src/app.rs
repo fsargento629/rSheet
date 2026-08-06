@@ -278,7 +278,7 @@ impl App {
         let pending = self.normal_cmd.pending_keys();
         if pending.is_empty() {
             self.status_message = String::from(
-                "NORMAL -- hjkl/arrows: nav | d: delete | y: yank | p: paste | 'a': visual | 'q': quit",
+                "NORMAL -- hjkl/arrows: nav | d: delete | y: yank | p/P: paste | gp/gP: overwrite paste | 'a': visual | 'q': quit",
             );
         } else {
             self.status_message = format!(
@@ -312,7 +312,10 @@ impl App {
                 let deleted =
                     self.sheet
                         .clear_range(self.cursor_row, row_end, 0, self.sheet.max_cols - 1);
-                self.clipboard = Some(ClipboardContent::Rows(deleted));
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows: deleted,
+                    col_offset: self.cursor_col,
+                });
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", count);
             }
@@ -323,11 +326,17 @@ impl App {
                 let row_end = (self.cursor_row + count - 1).min(self.sheet.max_rows - 1);
                 let rows = self.collect_rows(self.cursor_row, row_end);
                 let n = rows.len();
-                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows,
+                    col_offset: self.cursor_col,
+                });
                 self.status_message = format!("Yanked {} row(s)", n);
             }
             NormalCommand::Paste { before, count } => {
                 self.execute_paste(before, count);
+            }
+            NormalCommand::OverwritePaste { before, count } => {
+                self.execute_overwrite_paste(before, count);
             }
             NormalCommand::EnterVisualMode => self.enter_visual_mode(),
             NormalCommand::EnterInsertMode(s) => self.enter_insert_mode(s),
@@ -401,7 +410,10 @@ impl App {
             Motion::Down => {
                 let row_end = (row + count).min(max_row);
                 let deleted = self.sheet.clear_range(row, row_end, 0, max_col);
-                self.clipboard = Some(ClipboardContent::Rows(deleted));
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows: deleted,
+                    col_offset: 0,
+                });
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", row_end - row + 1);
             }
@@ -409,7 +421,10 @@ impl App {
             Motion::Up => {
                 let row_start = row.saturating_sub(count);
                 let deleted = self.sheet.clear_range(row_start, row, 0, max_col);
-                self.clipboard = Some(ClipboardContent::Rows(deleted));
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows: deleted,
+                    col_offset: 0,
+                });
                 self.cursor_row = row_start;
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", row - row_start + 1);
@@ -476,14 +491,20 @@ impl App {
                 let row_end = (row + count).min(max_row);
                 let rows = self.collect_rows(row, row_end);
                 let n = rows.len();
-                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows,
+                    col_offset: 0,
+                });
                 self.status_message = format!("Yanked {} row(s)", n);
             }
             Motion::Up => {
                 let row_start = row.saturating_sub(count);
                 let rows = self.collect_rows(row_start, row);
                 let n = rows.len();
-                self.clipboard = Some(ClipboardContent::Rows(rows));
+                self.clipboard = Some(ClipboardContent::Rows {
+                    rows,
+                    col_offset: 0,
+                });
                 self.status_message = format!("Yanked {} row(s)", n);
             }
             Motion::EndOfRow => {
@@ -536,7 +557,7 @@ impl App {
                 self.adjust_viewport();
                 self.status_message = format!("Pasted {} cell(s)", payload.len());
             }
-            ClipboardContent::Rows(rows) => {
+            ClipboardContent::Rows { rows, .. } => {
                 let row = if before {
                     self.cursor_row
                 } else {
@@ -553,6 +574,82 @@ impl App {
                 self.sheet.insert_rows(row, &payload);
                 self.adjust_viewport();
                 self.status_message = format!("Pasted {} row(s)", n);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Overwrite-paste execution (gp / gP)
+    // -------------------------------------------------------------------------
+
+    fn execute_overwrite_paste(&mut self, before: bool, count: usize) {
+        let clipboard = match self.clipboard.clone() {
+            Some(c) => c,
+            None => {
+                self.status_message = String::from("Nothing to paste");
+                return;
+            }
+        };
+
+        match clipboard {
+            ClipboardContent::Cells(cells) => {
+                let payload: Vec<String> = cells
+                    .iter()
+                    .cloned()
+                    .cycle()
+                    .take(cells.len() * count)
+                    .collect();
+                let col_start = if before {
+                    self.cursor_col
+                } else {
+                    self.cursor_col + 1
+                };
+                let max_col = self.sheet.max_cols - 1;
+                for (i, val) in payload.iter().enumerate() {
+                    let col = col_start + i;
+                    if col > max_col {
+                        break;
+                    }
+                    self.sheet.set_cell(self.cursor_row, col, val.clone());
+                }
+                self.adjust_viewport();
+                self.status_message = format!(
+                    "Overwrote {} cell(s)",
+                    payload.len().min(max_col - col_start + 1)
+                );
+            }
+            ClipboardContent::Rows { rows, col_offset } => {
+                let row_start = if before {
+                    self.cursor_row
+                } else {
+                    self.cursor_row + 1
+                };
+                let payload: Vec<Vec<String>> = rows
+                    .iter()
+                    .cloned()
+                    .cycle()
+                    .take(rows.len() * count)
+                    .collect();
+                let max_row = self.sheet.max_rows - 1;
+                let max_col = self.sheet.max_cols - 1;
+                let col_start = col_offset.min(max_col);
+                let mut pasted_rows = 0;
+                for (ri, row_vals) in payload.iter().enumerate() {
+                    let row = row_start + ri;
+                    if row > max_row {
+                        break;
+                    }
+                    for (ci, val) in row_vals.iter().enumerate() {
+                        let col = col_start + ci;
+                        if col > max_col {
+                            break;
+                        }
+                        self.sheet.set_cell(row, col, val.clone());
+                    }
+                    pasted_rows += 1;
+                }
+                self.adjust_viewport();
+                self.status_message = format!("Overwrote {} row(s)", pasted_rows);
             }
         }
     }
