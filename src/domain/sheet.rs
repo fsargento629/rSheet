@@ -150,7 +150,7 @@ impl Spreadsheet {
         let trimmed = raw.trim();
         let is_formula = trimmed.starts_with('=');
         let new_refs = if is_formula {
-            self.extract_references(&trimmed[1..])
+            self.extract_references(&trimmed[1..], row, col)
         } else {
             HashSet::new()
         };
@@ -290,7 +290,7 @@ impl Spreadsheet {
 
         if trimmed.starts_with('=') {
             let expr = &trimmed[1..];
-            self.data[r][c].computed = self.eval_expression(expr);
+            self.data[r][c].computed = self.eval_expression(expr, r, c);
         } else {
             self.data[r][c].evaluate_static();
         }
@@ -305,7 +305,7 @@ impl Spreadsheet {
                 let trimmed = self.data[r][c].raw.trim();
                 if trimmed.starts_with('=') {
                     let expr = &trimmed[1..];
-                    let refs = self.extract_references(expr);
+                    let refs = self.extract_references(expr, r, c);
                     if !refs.is_empty() {
                         self.dependencies.insert((r, c), refs.clone());
                         for dep in refs {
@@ -323,7 +323,7 @@ impl Spreadsheet {
         }
     }
 
-    fn extract_references(&self, expr: &str) -> HashSet<(usize, usize)> {
+    fn extract_references(&self, expr: &str, row: usize, col: usize) -> HashSet<(usize, usize)> {
         let mut refs = HashSet::new();
         if let Ok(tokens) = self.tokenize(expr) {
             for tok in tokens {
@@ -342,6 +342,36 @@ impl Spreadsheet {
                             for c in min_c..=max_c {
                                 if r < self.max_rows && c < self.max_cols {
                                     refs.insert((r, c));
+                                }
+                            }
+                        }
+                    }
+                    Token::RelRef(m, n) => {
+                        let ri = row as i64 + m;
+                        let ci = col as i64 + n;
+                        if ri >= 0 && ci >= 0 {
+                            let r = ri as usize;
+                            let c = ci as usize;
+                            if r < self.max_rows && c < self.max_cols {
+                                refs.insert((r, c));
+                            }
+                        }
+                    }
+                    Token::RelRange(m1, n1, m2, n2) => {
+                        let r1i = row as i64 + m1;
+                        let c1i = col as i64 + n1;
+                        let r2i = row as i64 + m2;
+                        let c2i = col as i64 + n2;
+                        if r1i >= 0 && c1i >= 0 && r2i >= 0 && c2i >= 0 {
+                            let min_r = (r1i as usize).min(r2i as usize);
+                            let max_r = (r1i as usize).max(r2i as usize);
+                            let min_c = (c1i as usize).min(c2i as usize);
+                            let max_c = (c1i as usize).max(c2i as usize);
+                            for r in min_r..=max_r {
+                                for c in min_c..=max_c {
+                                    if r < self.max_rows && c < self.max_cols {
+                                        refs.insert((r, c));
+                                    }
                                 }
                             }
                         }
@@ -373,7 +403,7 @@ impl Spreadsheet {
         }
     }
 
-    fn eval_expression(&self, expr: &str) -> CellValue {
+    fn eval_expression(&self, expr: &str, row: usize, col: usize) -> CellValue {
         let tokens = match self.tokenize(expr) {
             Ok(t) => t,
             Err(e) => return CellValue::Error(e),
@@ -384,7 +414,7 @@ impl Spreadsheet {
         }
 
         let mut idx = 0;
-        let res = self.parse_additive(&tokens, &mut idx);
+        let res = self.parse_additive(&tokens, &mut idx, row, col);
 
         if idx < tokens.len() {
             return CellValue::Error(CellError::Syntax);
@@ -393,8 +423,14 @@ impl Spreadsheet {
         res
     }
 
-    fn parse_additive(&self, tokens: &[Token], idx: &mut usize) -> CellValue {
-        let mut left = match self.parse_multiplicative(tokens, idx) {
+    fn parse_additive(
+        &self,
+        tokens: &[Token],
+        idx: &mut usize,
+        row: usize,
+        col: usize,
+    ) -> CellValue {
+        let mut left = match self.parse_multiplicative(tokens, idx, row, col) {
             CellValue::Number(n) => n,
             err => return err,
         };
@@ -403,7 +439,7 @@ impl Spreadsheet {
             match &tokens[*idx] {
                 Token::Plus => {
                     *idx += 1;
-                    let right = match self.parse_multiplicative(tokens, idx) {
+                    let right = match self.parse_multiplicative(tokens, idx, row, col) {
                         CellValue::Number(n) => n,
                         err => return err,
                     };
@@ -411,7 +447,7 @@ impl Spreadsheet {
                 }
                 Token::Minus => {
                     *idx += 1;
-                    let right = match self.parse_multiplicative(tokens, idx) {
+                    let right = match self.parse_multiplicative(tokens, idx, row, col) {
                         CellValue::Number(n) => n,
                         err => return err,
                     };
@@ -424,8 +460,14 @@ impl Spreadsheet {
         CellValue::Number(left)
     }
 
-    fn parse_multiplicative(&self, tokens: &[Token], idx: &mut usize) -> CellValue {
-        let mut left = match self.parse_unary(tokens, idx) {
+    fn parse_multiplicative(
+        &self,
+        tokens: &[Token],
+        idx: &mut usize,
+        row: usize,
+        col: usize,
+    ) -> CellValue {
+        let mut left = match self.parse_unary(tokens, idx, row, col) {
             CellValue::Number(n) => n,
             err => return err,
         };
@@ -434,7 +476,7 @@ impl Spreadsheet {
             match &tokens[*idx] {
                 Token::Star => {
                     *idx += 1;
-                    let right = match self.parse_unary(tokens, idx) {
+                    let right = match self.parse_unary(tokens, idx, row, col) {
                         CellValue::Number(n) => n,
                         err => return err,
                     };
@@ -442,7 +484,7 @@ impl Spreadsheet {
                 }
                 Token::Slash => {
                     *idx += 1;
-                    let right = match self.parse_unary(tokens, idx) {
+                    let right = match self.parse_unary(tokens, idx, row, col) {
                         CellValue::Number(n) => n,
                         err => return err,
                     };
@@ -458,7 +500,7 @@ impl Spreadsheet {
         CellValue::Number(left)
     }
 
-    fn parse_unary(&self, tokens: &[Token], idx: &mut usize) -> CellValue {
+    fn parse_unary(&self, tokens: &[Token], idx: &mut usize, row: usize, col: usize) -> CellValue {
         if *idx >= tokens.len() {
             return CellValue::Error(CellError::Syntax);
         }
@@ -466,20 +508,26 @@ impl Spreadsheet {
         match &tokens[*idx] {
             Token::Minus => {
                 *idx += 1;
-                match self.parse_unary(tokens, idx) {
+                match self.parse_unary(tokens, idx, row, col) {
                     CellValue::Number(n) => CellValue::Number(-n),
                     err => err,
                 }
             }
             Token::Plus => {
                 *idx += 1;
-                self.parse_unary(tokens, idx)
+                self.parse_unary(tokens, idx, row, col)
             }
-            _ => self.parse_primary(tokens, idx),
+            _ => self.parse_primary(tokens, idx, row, col),
         }
     }
 
-    fn parse_primary(&self, tokens: &[Token], idx: &mut usize) -> CellValue {
+    fn parse_primary(
+        &self,
+        tokens: &[Token],
+        idx: &mut usize,
+        row: usize,
+        col: usize,
+    ) -> CellValue {
         if *idx >= tokens.len() {
             return CellValue::Error(CellError::Syntax);
         }
@@ -491,19 +539,30 @@ impl Spreadsheet {
                 CellValue::Number(val)
             }
             Token::CellRef(r, c) => {
-                let row = *r;
-                let col = *c;
+                let r = *r;
+                let c = *c;
                 *idx += 1;
-                self.eval_cell_value(row, col)
+                self.eval_cell_value(r, c)
+            }
+            Token::RelRef(m, n) => {
+                let m = *m;
+                let n = *n;
+                *idx += 1;
+                let ri = row as i64 + m;
+                let ci = col as i64 + n;
+                if ri < 0 || ci < 0 {
+                    return CellValue::Error(CellError::Ref);
+                }
+                self.eval_cell_value(ri as usize, ci as usize)
             }
             Token::Function(name) => {
                 let func_name = name.clone();
                 *idx += 1;
-                self.parse_function_call(&func_name, tokens, idx)
+                self.parse_function_call(&func_name, tokens, idx, row, col)
             }
             Token::LParen => {
                 *idx += 1;
-                let val = self.parse_additive(tokens, idx);
+                let val = self.parse_additive(tokens, idx, row, col);
                 if *idx < tokens.len() && tokens[*idx] == Token::RParen {
                     *idx += 1;
                     val
@@ -515,7 +574,14 @@ impl Spreadsheet {
         }
     }
 
-    fn parse_function_call(&self, func_name: &str, tokens: &[Token], idx: &mut usize) -> CellValue {
+    fn parse_function_call(
+        &self,
+        func_name: &str,
+        tokens: &[Token],
+        idx: &mut usize,
+        row: usize,
+        col: usize,
+    ) -> CellValue {
         // Expect '('
         if *idx >= tokens.len() || tokens[*idx] != Token::LParen {
             return CellValue::Error(CellError::Syntax);
@@ -551,8 +617,28 @@ impl Spreadsheet {
                         }
                     }
                 }
+                Token::RelRange(m1, n1, m2, n2) => {
+                    let (m1, n1, m2, n2) = (*m1, *n1, *m2, *n2);
+                    *idx += 1;
+                    let r1i = row as i64 + m1;
+                    let c1i = col as i64 + n1;
+                    let r2i = row as i64 + m2;
+                    let c2i = col as i64 + n2;
+                    if r1i < 0 || c1i < 0 || r2i < 0 || c2i < 0 {
+                        return CellValue::Error(CellError::Ref);
+                    }
+                    let min_r = (r1i as usize).min(r2i as usize);
+                    let max_r = (r1i as usize).max(r2i as usize);
+                    let min_c = (c1i as usize).min(c2i as usize);
+                    let max_c = (c1i as usize).max(c2i as usize);
+                    for r in min_r..=max_r {
+                        for c in min_c..=max_c {
+                            args.push(self.eval_cell_value(r, c));
+                        }
+                    }
+                }
                 _ => {
-                    let arg = self.parse_additive(tokens, idx);
+                    let arg = self.parse_additive(tokens, idx, row, col);
                     args.push(arg);
                 }
             }
@@ -714,6 +800,139 @@ impl Spreadsheet {
 
                         tokens.push(Token::CellRef(row_idx, col_idx));
                     }
+                }
+                '@' => {
+                    i += 1; // skip '@'
+                    if i >= chars.len() || chars[i] != '(' {
+                        return Err(CellError::Syntax);
+                    }
+                    i += 1; // skip '('
+                    while i < chars.len() && chars[i].is_whitespace() {
+                        i += 1;
+                    }
+                    // parse signed row offset
+                    let neg_row = i < chars.len() && chars[i] == '-';
+                    if neg_row {
+                        i += 1;
+                    }
+                    let row_start = i;
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    if i == row_start {
+                        return Err(CellError::Syntax);
+                    }
+                    let row_str: String = chars[row_start..i].iter().collect();
+                    let row_abs: i64 = row_str.parse().map_err(|_| CellError::Syntax)?;
+                    let row_offset = if neg_row { -row_abs } else { row_abs };
+                    while i < chars.len() && chars[i].is_whitespace() {
+                        i += 1;
+                    }
+                    if i >= chars.len() || chars[i] != ',' {
+                        return Err(CellError::Syntax);
+                    }
+                    i += 1; // skip ','
+                    while i < chars.len() && chars[i].is_whitespace() {
+                        i += 1;
+                    }
+                    // parse signed col offset
+                    let neg_col = i < chars.len() && chars[i] == '-';
+                    if neg_col {
+                        i += 1;
+                    }
+                    let col_start = i;
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    if i == col_start {
+                        return Err(CellError::Syntax);
+                    }
+                    let col_str: String = chars[col_start..i].iter().collect();
+                    let col_abs: i64 = col_str.parse().map_err(|_| CellError::Syntax)?;
+                    let col_offset = if neg_col { -col_abs } else { col_abs };
+                    while i < chars.len() && chars[i].is_whitespace() {
+                        i += 1;
+                    }
+                    if i >= chars.len() || chars[i] != ')' {
+                        return Err(CellError::Syntax);
+                    }
+                    i += 1; // skip ')'
+
+                    // Peek ahead: if ':' followed by '@(…)' this is a relative range.
+                    let mut peek = i;
+                    while peek < chars.len() && chars[peek].is_whitespace() {
+                        peek += 1;
+                    }
+                    if peek < chars.len() && chars[peek] == ':' {
+                        let mut peek2 = peek + 1;
+                        while peek2 < chars.len() && chars[peek2].is_whitespace() {
+                            peek2 += 1;
+                        }
+                        if peek2 < chars.len() && chars[peek2] == '@' {
+                            // Commit: parse the second @(m2,n2)
+                            i = peek2 + 1; // skip '@'
+                            if i >= chars.len() || chars[i] != '(' {
+                                return Err(CellError::Syntax);
+                            }
+                            i += 1; // skip '('
+                            while i < chars.len() && chars[i].is_whitespace() {
+                                i += 1;
+                            }
+                            let neg_row2 = i < chars.len() && chars[i] == '-';
+                            if neg_row2 {
+                                i += 1;
+                            }
+                            let row2_start = i;
+                            while i < chars.len() && chars[i].is_ascii_digit() {
+                                i += 1;
+                            }
+                            if i == row2_start {
+                                return Err(CellError::Syntax);
+                            }
+                            let row2_str: String = chars[row2_start..i].iter().collect();
+                            let row2_abs: i64 = row2_str.parse().map_err(|_| CellError::Syntax)?;
+                            let row_offset2 = if neg_row2 { -row2_abs } else { row2_abs };
+                            while i < chars.len() && chars[i].is_whitespace() {
+                                i += 1;
+                            }
+                            if i >= chars.len() || chars[i] != ',' {
+                                return Err(CellError::Syntax);
+                            }
+                            i += 1; // skip ','
+                            while i < chars.len() && chars[i].is_whitespace() {
+                                i += 1;
+                            }
+                            let neg_col2 = i < chars.len() && chars[i] == '-';
+                            if neg_col2 {
+                                i += 1;
+                            }
+                            let col2_start = i;
+                            while i < chars.len() && chars[i].is_ascii_digit() {
+                                i += 1;
+                            }
+                            if i == col2_start {
+                                return Err(CellError::Syntax);
+                            }
+                            let col2_str: String = chars[col2_start..i].iter().collect();
+                            let col2_abs: i64 = col2_str.parse().map_err(|_| CellError::Syntax)?;
+                            let col_offset2 = if neg_col2 { -col2_abs } else { col2_abs };
+                            while i < chars.len() && chars[i].is_whitespace() {
+                                i += 1;
+                            }
+                            if i >= chars.len() || chars[i] != ')' {
+                                return Err(CellError::Syntax);
+                            }
+                            i += 1; // skip ')'
+                            tokens.push(Token::RelRange(
+                                row_offset,
+                                col_offset,
+                                row_offset2,
+                                col_offset2,
+                            ));
+                            continue;
+                        }
+                    }
+                    tokens.push(Token::RelRef(row_offset, col_offset));
                 }
                 _ => return Err(CellError::Syntax),
             }
@@ -919,6 +1138,67 @@ impl Spreadsheet {
         }
         result
     }
+
+    /// Rewrite a formula string so that every absolute `CellRef` / `Range` token
+    /// is converted to a relative `@(M,N)` / `@(M1,N1):@(M2,N2)` form anchored
+    /// at `(src_row, src_col)`.
+    ///
+    /// - Non-formula strings (no leading `=`) are returned unchanged.
+    /// - Already-relative `@` tokens are preserved as-is.
+    pub fn relativize_formula(&self, raw: &str, src_row: usize, src_col: usize) -> String {
+        let trimmed = raw.trim();
+        if !trimmed.starts_with('=') {
+            return raw.to_string();
+        }
+        let expr = &trimmed[1..];
+        let tokens = match self.tokenize(expr) {
+            Ok(t) => t,
+            Err(_) => return raw.to_string(),
+        };
+
+        let mut result = String::from("=");
+        for tok in &tokens {
+            match tok {
+                Token::CellRef(r, c) => {
+                    let row_off = *r as i64 - src_row as i64;
+                    let col_off = *c as i64 - src_col as i64;
+                    result.push_str(&format!("@({},{})", row_off, col_off));
+                }
+                Token::RelRef(m, n) => {
+                    // Already relative — keep as-is.
+                    result.push_str(&format!("@({},{})", m, n));
+                }
+                Token::Range(r1, c1, r2, c2) => {
+                    // Convert absolute range to relative.
+                    let m1 = *r1 as i64 - src_row as i64;
+                    let n1 = *c1 as i64 - src_col as i64;
+                    let m2 = *r2 as i64 - src_row as i64;
+                    let n2 = *c2 as i64 - src_col as i64;
+                    result.push_str(&format!("@({},{}):@({},{})", m1, n1, m2, n2));
+                }
+                Token::RelRange(m1, n1, m2, n2) => {
+                    // Already relative — keep as-is.
+                    result.push_str(&format!("@({},{}):@({},{})", m1, n1, m2, n2));
+                }
+                Token::Number(n) => {
+                    if n.fract() == 0.0 {
+                        result.push_str(&format!("{:.0}", n));
+                    } else {
+                        result.push_str(&format!("{}", n));
+                    }
+                }
+                Token::Plus => result.push('+'),
+                Token::Minus => result.push('-'),
+                Token::Star => result.push('*'),
+                Token::Slash => result.push('/'),
+                Token::LParen => result.push('('),
+                Token::RParen => result.push(')'),
+                Token::Function(name) => result.push_str(name),
+                Token::Comma => result.push(','),
+            }
+        }
+        result
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -926,6 +1206,10 @@ enum Token {
     Number(f64),
     CellRef(usize, usize),
     Range(usize, usize, usize, usize),
+    /// `@(row_offset, col_offset)` — a relative single-cell reference.
+    RelRef(i64, i64),
+    /// `@(m1,n1):@(m2,n2)` — a relative range reference.
+    RelRange(i64, i64, i64, i64),
     Plus,
     Minus,
     Star,
@@ -939,6 +1223,35 @@ enum Token {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_relativize_range_formula() {
+        let mut sheet = Spreadsheet::new(10, 10);
+        // A1:A5 = 1..5  (rows 0-4, col 0)
+        for i in 0..5usize {
+            sheet.set_cell(i, 0, (i + 1).to_string());
+        }
+        // A6 = SUM(A1:A5) = 15  (row 5, col 0)
+        sheet.set_cell(5, 0, "=SUM(A1:A5)".to_string());
+        assert_eq!(
+            sheet.get_cell(5, 0).unwrap().computed,
+            CellValue::Number(15.0)
+        );
+
+        // relativize from A6 (5,0): A1:A5 = rows 0..4, col 0
+        //   offsets from (5,0) → @(-5,0):@(-1,0)
+        let rel = sheet.relativize_formula("=SUM(A1:A5)", 5, 0);
+        assert_eq!(rel, "=SUM(@(-5,0):@(-1,0))");
+
+        // Paste into A7 (row 6, col 0):
+        //   @(-5,0) from row 6 → row 1 (A2), @(-1,0) → row 5 (A6)
+        //   SUM(A2:A6) = 2+3+4+5+15 = 29
+        sheet.set_cell(6, 0, rel);
+        assert_eq!(
+            sheet.get_cell(6, 0).unwrap().computed,
+            CellValue::Number(29.0)
+        );
+    }
 
     #[test]
     fn test_cell_range_functions() {

@@ -1,5 +1,5 @@
 use crate::domain::Spreadsheet;
-use crate::normal_mode::{ClipboardContent, Motion, NormalCommand, NormalModeState};
+use crate::normal_mode::{ClipboardContent, Motion, NormalCommand, NormalModeState, YankKind};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Instant;
 
@@ -342,12 +342,16 @@ impl App {
                 self.adjust_viewport();
                 self.status_message = format!("Deleted {} row(s)", count);
             }
-            NormalCommand::Yank { motion, count } => {
-                self.execute_yank(motion, count);
+            NormalCommand::Yank {
+                motion,
+                count,
+                kind,
+            } => {
+                self.execute_yank(motion, count, kind);
             }
-            NormalCommand::YankRow { count } => {
+            NormalCommand::YankRow { count, kind } => {
                 let row_end = (self.cursor_row + count - 1).min(self.sheet.max_rows - 1);
-                let rows = self.collect_rows(self.cursor_row, row_end);
+                let rows = self.collect_rows(self.cursor_row, row_end, kind);
                 let n = rows.len();
                 self.clipboard = Some(ClipboardContent::Rows {
                     rows,
@@ -615,7 +619,7 @@ impl App {
     // Yank execution
     // -------------------------------------------------------------------------
 
-    fn execute_yank(&mut self, motion: Motion, count: usize) {
+    fn execute_yank(&mut self, motion: Motion, count: usize, kind: YankKind) {
         let row = self.cursor_row;
         let col = self.cursor_col;
         let max_col = self.sheet.max_cols - 1;
@@ -628,7 +632,7 @@ impl App {
                 }
                 let col_end = col;
                 let col_start = col.saturating_sub(count - 1);
-                let cells = self.collect_cells_in_row(row, col_start, col_end);
+                let cells = self.collect_cells_in_row(row, col_start, col_end, kind);
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Cells(cells));
                 self.status_message = format!("Yanked {} cell(s)", n);
@@ -639,7 +643,7 @@ impl App {
                 }
                 let col_start = col;
                 let col_end = (col + count - 1).min(max_col);
-                let cells = self.collect_cells_in_row(row, col_start, col_end);
+                let cells = self.collect_cells_in_row(row, col_start, col_end, kind);
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Cells(cells));
                 self.status_message = format!("Yanked {} cell(s)", n);
@@ -650,7 +654,7 @@ impl App {
                 }
                 let row_end = (row + count - 1).min(max_row);
                 let cells: Vec<String> = (row..=row_end)
-                    .filter_map(|r| self.sheet.get_cell(r, col).map(|c| c.raw.clone()))
+                    .map(|r| self.cell_for_yank(r, col, kind))
                     .collect();
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Column {
@@ -665,7 +669,7 @@ impl App {
                 }
                 let row_start = row.saturating_sub(count - 1);
                 let cells: Vec<String> = (row_start..=row)
-                    .filter_map(|r| self.sheet.get_cell(r, col).map(|c| c.raw.clone()))
+                    .map(|r| self.cell_for_yank(r, col, kind))
                     .collect();
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Column {
@@ -675,7 +679,7 @@ impl App {
                 self.status_message = format!("Yanked {} cell(s) up", n);
             }
             Motion::EndOfRow => {
-                let cells = self.collect_cells_in_row(row, col, max_col);
+                let cells = self.collect_cells_in_row(row, col, max_col, kind);
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Cells(cells));
                 self.status_message = format!("Yanked {} cell(s) to end of row", n);
@@ -684,7 +688,7 @@ impl App {
                 if col == 0 {
                     return;
                 }
-                let cells = self.collect_cells_in_row(row, 0, col - 1);
+                let cells = self.collect_cells_in_row(row, 0, col - 1, kind);
                 let n = cells.len();
                 self.clipboard = Some(ClipboardContent::Cells(cells));
                 self.status_message = format!("Yanked {} cell(s) to start of row", n);
@@ -878,19 +882,54 @@ impl App {
     // Clipboard collection helpers
     // -------------------------------------------------------------------------
 
-    /// Collect raw cell values for columns `[col_start ..= col_end]` of `row`.
-    fn collect_cells_in_row(&self, row: usize, col_start: usize, col_end: usize) -> Vec<String> {
+    /// Returns cell content at `(row, col)` transformed according to `kind`:
+    /// - `Relative`: formula with absolute refs rewritten to `@(M,N)`
+    /// - `Value`: the evaluated display string
+    /// - `Raw`: the raw cell string verbatim
+    fn cell_for_yank(&self, row: usize, col: usize, kind: YankKind) -> String {
+        match kind {
+            YankKind::Relative => {
+                let raw = self
+                    .sheet
+                    .get_cell(row, col)
+                    .map(|c| c.raw.clone())
+                    .unwrap_or_default();
+                self.sheet.relativize_formula(&raw, row, col)
+            }
+            YankKind::Value => self
+                .sheet
+                .get_cell(row, col)
+                .map(|c| c.display_text())
+                .unwrap_or_default(),
+            YankKind::Raw => self
+                .sheet
+                .get_cell(row, col)
+                .map(|c| c.raw.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Collect cell content for columns `[col_start ..= col_end]` of `row`,
+    /// transforming each cell according to `kind`.
+    fn collect_cells_in_row(
+        &self,
+        row: usize,
+        col_start: usize,
+        col_end: usize,
+        kind: YankKind,
+    ) -> Vec<String> {
         (col_start..=col_end)
-            .filter_map(|c| self.sheet.get_cell(row, c).map(|cell| cell.raw.clone()))
+            .map(|c| self.cell_for_yank(row, c, kind))
             .collect()
     }
 
-    /// Collect full rows (as `Vec<String>` of raw values) for `[row_start ..= row_end]`.
-    fn collect_rows(&self, row_start: usize, row_end: usize) -> Vec<Vec<String>> {
+    /// Collect full rows for `[row_start ..= row_end]`, transforming each cell
+    /// according to `kind`.
+    fn collect_rows(&self, row_start: usize, row_end: usize, kind: YankKind) -> Vec<Vec<String>> {
         (row_start..=row_end)
             .map(|r| {
                 (0..self.sheet.max_cols)
-                    .filter_map(|c| self.sheet.get_cell(r, c).map(|cell| cell.raw.clone()))
+                    .map(|c| self.cell_for_yank(r, c, kind))
                     .collect()
             })
             .collect()

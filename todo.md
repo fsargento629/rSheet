@@ -2,8 +2,6 @@
 
 ## Next
 
-- new yank kind: Y for legacy yank, and y for new, relative yank.
-  - TODO!
 
 
 ## New test scenarios

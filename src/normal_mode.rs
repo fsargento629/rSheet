@@ -24,11 +24,22 @@ pub enum Motion {
     WordBack,
 }
 
+/// Distinguishes the three yank modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YankKind {
+    /// `y` — formula yank: absolute cell refs are rewritten to `@(M,N)` relative offsets.
+    Relative,
+    /// `Y` — value yank: stores the evaluated display value, not the raw formula.
+    Value,
+    /// `gy` — raw yank: copies the cell content string verbatim (legacy behaviour).
+    Raw,
+}
+
 /// Which high-level operation was requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operator {
     Delete,
-    Yank,
+    Yank(YankKind),
 }
 
 /// Clipboard content produced by a yank operation.
@@ -66,9 +77,13 @@ pub enum NormalCommand {
     /// Delete `count` complete rows starting at the cursor row (`dd`, `2dd`, …).
     DeleteRow { count: usize },
     /// Yank (copy) driven by `motion`.
-    Yank { motion: Motion, count: usize },
+    Yank {
+        motion: Motion,
+        count: usize,
+        kind: YankKind,
+    },
     /// Yank `count` complete rows starting at the cursor row (`yy`, `2yy`, …).
-    YankRow { count: usize },
+    YankRow { count: usize, kind: YankKind },
     /// Paste clipboard content before or after the cursor, repeated `count` times.
     /// Inserts a new row / shifts cells — existing content is displaced.
     Paste { before: bool, count: usize },
@@ -108,6 +123,8 @@ enum SubState {
     GPrefix,
     /// `gd` has been typed; waiting for count2 + motion (mirrors OperatorPending).
     GdOperatorPending,
+    /// `gy` has been typed; waiting for count2 + motion (raw yank).
+    GyOperatorPending,
 }
 
 // ---------------------------------------------------------------------------
@@ -159,11 +176,13 @@ impl NormalModeState {
         match self.sub_state {
             SubState::GPrefix => s.push('g'),
             SubState::GdOperatorPending => s.push_str("gd"),
+            SubState::GyOperatorPending => s.push_str("gy"),
             SubState::OperatorPending => {
                 if let Some(op) = self.operator {
                     s.push(match op {
                         Operator::Delete => 'd',
-                        Operator::Yank => 'y',
+                        Operator::Yank(YankKind::Value) => 'Y',
+                        Operator::Yank(_) => 'y',
                     });
                 }
             }
@@ -226,6 +245,7 @@ impl NormalModeState {
             SubState::OperatorPending => self.process_pending(ch),
             SubState::GPrefix => self.process_g_prefix(ch),
             SubState::GdOperatorPending => self.process_gd_pending(ch),
+            SubState::GyOperatorPending => self.process_gy_pending(ch),
         }
     }
 
@@ -303,7 +323,12 @@ impl NormalModeState {
                 None
             }
             'y' => {
-                self.operator = Some(Operator::Yank);
+                self.operator = Some(Operator::Yank(YankKind::Relative));
+                self.sub_state = SubState::OperatorPending;
+                None
+            }
+            'Y' => {
+                self.operator = Some(Operator::Yank(YankKind::Value));
                 self.sub_state = SubState::OperatorPending;
                 None
             }
@@ -434,16 +459,21 @@ impl NormalModeState {
                 Some(Self::op_cmd(op, Motion::EndOfRow, c))
             }
 
-            // ── Line-wise: dd / yy ────────────────────────────────────────────
+            // ── Line-wise: dd / yy / YY ───────────────────────────────────────
             'd' if op == Operator::Delete => {
                 let c = self.c1();
                 self.reset();
                 Some(NormalCommand::DeleteRow { count: c })
             }
-            'y' if op == Operator::Yank => {
+            // `y` + `y` (any kind) or `Y` + `Y` → line-wise yank row
+            'y' | 'Y' if matches!(op, Operator::Yank(_)) => {
                 let c = self.c1();
+                let kind = match op {
+                    Operator::Yank(k) => k,
+                    _ => unreachable!(),
+                };
                 self.reset();
-                Some(NormalCommand::YankRow { count: c })
+                Some(NormalCommand::YankRow { count: c, kind })
             }
 
             // ── Anything else: cancel ─────────────────────────────────────────
@@ -484,6 +514,11 @@ impl NormalModeState {
             // count1 is preserved; count2 will be accumulated in the next state.
             'd' => {
                 self.sub_state = SubState::GdOperatorPending;
+                None
+            }
+            // gy — enter raw-yank operator-pending state.
+            'y' => {
+                self.sub_state = SubState::GyOperatorPending;
                 None
             }
             _ => {
@@ -592,10 +627,117 @@ impl NormalModeState {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // gy operator-pending state  (raw yank)
+    // -------------------------------------------------------------------------
+
+    fn process_gy_pending(&mut self, ch: char) -> Option<NormalCommand> {
+        match ch {
+            '1'..='9' => {
+                self.count2 = self.count2 * 10 + (ch as usize - '0' as usize);
+                None
+            }
+            '0' => {
+                if self.count2 > 0 {
+                    self.count2 *= 10;
+                    None
+                } else {
+                    let count = self.total();
+                    self.reset();
+                    Some(NormalCommand::Yank {
+                        motion: Motion::StartOfRow,
+                        count,
+                        kind: YankKind::Raw,
+                    })
+                }
+            }
+            'h' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::Left,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            'j' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::Down,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            'k' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::Up,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            'l' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::Right,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            'w' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::WordForward,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            'b' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::WordBack,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            '$' => {
+                let c = self.total();
+                self.reset();
+                Some(NormalCommand::Yank {
+                    motion: Motion::EndOfRow,
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            // gyy — raw yank entire current row
+            'y' => {
+                let c = self.c1();
+                self.reset();
+                Some(NormalCommand::YankRow {
+                    count: c,
+                    kind: YankKind::Raw,
+                })
+            }
+            _ => {
+                self.reset();
+                Some(NormalCommand::Reset)
+            }
+        }
+    }
+
     fn op_cmd(op: Operator, motion: Motion, count: usize) -> NormalCommand {
         match op {
             Operator::Delete => NormalCommand::Delete { motion, count },
-            Operator::Yank => NormalCommand::Yank { motion, count },
+            Operator::Yank(kind) => NormalCommand::Yank {
+                motion,
+                count,
+                kind,
+            },
         }
     }
 }
@@ -711,7 +853,37 @@ mod tests {
         s.process_char('y');
         assert!(matches!(
             s.process_char('y'),
-            Some(NormalCommand::YankRow { count: 1 })
+            Some(NormalCommand::YankRow {
+                count: 1,
+                kind: YankKind::Relative
+            })
+        ));
+    }
+
+    #[test]
+    fn test_YY() {
+        let mut s = NormalModeState::new();
+        s.process_char('Y');
+        assert!(matches!(
+            s.process_char('Y'),
+            Some(NormalCommand::YankRow {
+                count: 1,
+                kind: YankKind::Value
+            })
+        ));
+    }
+
+    #[test]
+    fn test_gyy() {
+        let mut s = NormalModeState::new();
+        s.process_char('g');
+        s.process_char('y');
+        assert!(matches!(
+            s.process_char('y'),
+            Some(NormalCommand::YankRow {
+                count: 1,
+                kind: YankKind::Raw
+            })
         ));
     }
 
