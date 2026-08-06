@@ -4,11 +4,6 @@
 
 ### Normal mode command fixes
 
-### Yank to include cursor
-so yl yanks just the cursor, y2l yanks the cursor and the cell to the right, y2h yanks the cursor and the cell to the left, etc.
-
-
-
 ## Future
 
 - new yank kind: Y for relative yank
